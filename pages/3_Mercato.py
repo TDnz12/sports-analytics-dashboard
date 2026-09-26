@@ -283,10 +283,22 @@ def prepare_season(sport_key: str, season: str) -> dict:
     }
 
 
-try:
-    prep = prepare_season(sport.key, season)
-except Exception as exc:
-    st.error(f"Impossible de charger la composition Mercato pour {season} : {exc}")
+# Échec retenu par saison pour la session : st.cache_data ne met pas les exceptions en cache,
+# sans ça chaque rerun referait attendre le délai réseau complet (voir NBA_API_TIMEOUT_SECONDS).
+_failed = st.session_state.setdefault("mercato_failed_seasons", {})
+prep_error = _failed.get(season)
+if prep_error is None:
+    try:
+        prep = prepare_season(sport.key, season)
+    except Exception as exc:
+        prep_error = _failed[season] = str(exc)
+if prep_error is not None:
+    st.error(
+        f"Données Mercato indisponibles pour {season} : le serveur de la NBA n'a pas répondu "
+        "(il bloque souvent les hébergements en ligne). Choisis une autre saison."
+    )
+    with st.expander("Détail technique"):
+        st.code(prep_error)
     st.stop()
 
 if prep["empty"]:

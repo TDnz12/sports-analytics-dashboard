@@ -88,6 +88,9 @@ EARLIEST_SUPPORTED_SEASON_START_YEAR = 1996  # nba_api est fiable à partir de 1
 # qu'une colonne annexe (ex: _fetch_player_positions, dont dépend le radar de comparaison).
 NETWORK_RETRY_ATTEMPTS = 3
 NETWORK_RETRY_BACKOFF_SECONDS = 1.5
+# Délai max d'un appel nba_api sans réponse (défaut nba_api : 30 s). Sur Streamlit Cloud,
+# stats.nba.com ne répond pas : 3 tentatives x 30 s bloquaient la page Mercato ~1 min 30.
+NBA_API_TIMEOUT_SECONDS = 10
 
 logger = logging.getLogger(__name__)
 
@@ -1221,6 +1224,7 @@ def _fetch_player_game_log(season: str, force_refresh: bool = False) -> pd.DataF
     raw = _call_with_retries(
         lambda: leaguegamelog.LeagueGameLog(
             season=season, season_type_all_star="Regular Season", player_or_team_abbreviation="P",
+            timeout=NBA_API_TIMEOUT_SECONDS,
         ).get_data_frames()[0],
         description=f"_fetch_player_game_log({season})",
     )

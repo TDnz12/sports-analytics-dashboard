@@ -1,5 +1,5 @@
-"""Pré-remplit le cache disque (data_cache/processed/nba/<saison>.parquet) pour TOUTES
-les saisons couvertes par le dashboard (nba.SEASONS, 1996-97 -> 2025-26), pour qu'aucun
+"""Pré-remplit le cache disque (data_cache/processed/nba/<saison>.parquet, plus les caches
+Mercato game_log_<saison> et mercato_<saison>) pour TOUTES les saisons couvertes par le dashboard (nba.SEASONS, 1996-97 -> 2025-26), pour qu'aucun
 utilisateur ne se retrouve à attendre ~5-15s de calcul + appels réseau nba_api/Kaggle au
 premier chargement de chaque saison.
 
@@ -55,6 +55,12 @@ def main() -> None:
             n_salary = int(df["salary_musd"].notna().sum())
             status = "OK" if cached_ok else "OK (non mis en cache, voir logs)"
             print(f"    -> {status} en {elapsed:.1f}s, {len(df)} joueurs, {n_salary} avec salaire")
+            # Page Mercato : game_log_<saison> (brut) + mercato_<saison> (traité), lus depuis le
+            # cache s'il est déjà valide -- sans eux la page appelle nba_api en ligne.
+            lineup = nba.get_mercato_lineup(season)
+            nba.get_team_identity(season)
+            cached_ok = cached_ok and (nba.NBA_PROCESSED_DIR / f"mercato_{season}.parquet").exists()
+            print(f"    -> Mercato OK, {lineup['team'].nunique()} équipes")
             results[season] = (cached_ok, elapsed, "")
         except Exception as exc:
             elapsed = time.time() - t0
