@@ -89,7 +89,7 @@ EARLIEST_SUPPORTED_SEASON_START_YEAR = 1996  # nba_api est fiable à partir de 1
 NETWORK_RETRY_ATTEMPTS = 3
 NETWORK_RETRY_BACKOFF_SECONDS = 1.5
 # Délai max d'un appel nba_api sans réponse (défaut nba_api : 30 s). Sur Streamlit Cloud,
-# stats.nba.com ne répond pas : 3 tentatives x 30 s bloquaient la page Mercato ~1 min 30.
+# stats.nba.com ne répond pas : 3 tentatives x 30 s bloquaient la page Effectifs (ex-Mercato) ~1 min 30.
 NBA_API_TIMEOUT_SECONDS = 10
 
 logger = logging.getLogger(__name__)
@@ -258,17 +258,17 @@ def get_teams_static() -> list[dict]:
     """Liste statique des 30 franchises NBA actuelles -- nba_api.stats.static.teams, données
     embarquées dans le package (AUCUN appel réseau, contrairement au reste de ce module).
     Chaque entrée : id/abbreviation/full_name/nickname/city. Sert à construire les URLs de
-    logos du CDN public NBA (pages/2_Rosters.py) --
-    https://cdn.nba.com/logos/nba/{id}/global/L/logo.svg -- et la grille d'équipes.
+    logos du CDN public NBA (pages/2_Effectifs.py) --
+    https://cdn.nba.com/logos/nba/{id}/global/L/logo.svg.
 
     Abréviations D'AUJOURD'HUI uniquement : une franchise ayant changé de nom/ville depuis 1996
     (ex: Seattle SuperSonics -> Oklahoma City Thunder, Vancouver -> Memphis Grizzlies, New
     Jersey -> Brooklyn Nets) n'a qu'UNE entrée ici, sous son identité actuelle -- alors que la
     colonne "team" de get_player_stats reste l'abréviation HISTORIQUE réellement en usage cette
-    saison-là (nba_api normalise season par season, voir _fetch_nba_api_stats). Une saison
-    ancienne + une franchise relocalisée depuis peut donc ne matcher aucun joueur (roster vide) :
-    limite connue, acceptée pour la v1 de pages/2_Rosters.py plutôt que reconstruire une table de
-    correspondance historique par saison pour un cas marginal.
+    saison-là (nba_api normalise season par season, voir _fetch_nba_api_stats). Ne pas s'en
+    servir pour lister les équipes d'une saison : pages/2_Effectifs.py utilise les codes
+    d'équipe de la saison (get_mercato_lineup/get_team_identity) et ne consulte cette liste que
+    pour savoir si le logo actuel d'une franchise est affichable (voir team_logo_url).
 
     lru_cache (pas d'écriture disque via base.write_cache comme le reste du module) : purement
     statique et déjà instantané (aucun appel réseau), un cache disque n'apporterait rien."""
@@ -314,7 +314,7 @@ NBA_API_POSITIONS_SCHEMA_VERSION = 1
 NBA_API_GAME_LOG_SCHEMA_VERSION = 2  # v2: ajout team_id/team_name (déjà renvoyés par
 # LeagueGameLog, juste pas gardés avant) -- utilisés par get_team_identity, pas de second appel
 # réseau nécessaire pour le nom d'équipe exact d'une saison (ex: "Charlotte Bobcats" en 2004-05
-# vs "Charlotte Hornets" aujourd'hui, même team_id -- voir pages/3_Mercato.py)
+# vs "Charlotte Hornets" aujourd'hui, même team_id -- voir pages/2_Effectifs.py)
 
 # Cache pour get_mercato_lineup (carte "Mercato" par équipe).
 MERCATO_SCHEMA_VERSION = 4  # v4: troisième critère d'éligibilité -- un joueur établi (>= 25% de
@@ -1444,9 +1444,10 @@ def get_team_identity(season: str, force_refresh: bool = False) -> pd.DataFrame:
     get_mercato_lineup) : TEAM_ID/TEAM_NAME sont déjà renvoyés par LeagueGameLog, pas besoin
     d'un second appel réseau (ex: FranchiseHistory) pour cette donnée.
 
-    Utilisé par pages/3_Mercato.py (et par pages/2_Rosters.py à terme) pour ne montrer le logo
-    ACTUEL d'une franchise que si son identité (team_id + nom) cette saison-là est bien celle
-    d'aujourd'hui -- voir team_logo_url() dans pages/3_Mercato.py."""
+    Utilisé par pages/2_Effectifs.py (grille et vue effectif réel) pour le nom d'équipe de la
+    saison et pour ne montrer le logo ACTUEL d'une franchise que si son identité (team_id + nom)
+    cette saison-là est bien celle d'aujourd'hui -- voir team_logo_url() dans
+    pages/2_Effectifs.py."""
     game_log = _fetch_player_game_log(season, force_refresh=force_refresh)
     return game_log[["team", "team_id", "team_name"]].drop_duplicates(subset="team").reset_index(drop=True)
 

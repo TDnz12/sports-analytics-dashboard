@@ -88,7 +88,7 @@ st.markdown(
     }
 
     /* Espace au-dessus des liens de navigation multi-page (Dashboard / Radar de comparaison /
-       Rosters), juste en dessous de stSidebarHeader ci-dessus -- zone distincte du bloc "Sports
+       Effectifs), juste en dessous de stSidebarHeader ci-dessus -- zone distincte du bloc "Sports
        Analytics" et de ses widgets encore en dessous (compactés par les règles suivantes, déjà en
        place). Pas de risque d'emoji/glyphe ici (juste du texte de lien), donc réduit plus
        franchement que le titre. */
@@ -190,7 +190,7 @@ season_options = [ALL_SEASONS_LABEL] + sport.seasons
 # la plus récente une fois ratin21 mis à jour ; sport.seasons[0] reste la plus récente couverte
 # par nba_api (stats de jeu), toujours sélectionnable manuellement dans ce sélecteur entre-temps.
 _default_season = "2024-25" if "2024-25" in sport.seasons else sport.seasons[0]
-# key="main_season" (en plus de index=) : permet à d'autres pages (ex. pages/2_Rosters.py) de
+# key="main_season" (en plus de index=) : permet à d'autres pages (ex. pages/2_Effectifs.py) de
 # lire la saison actuellement affichée ici via st.session_state.get("main_season") et de s'y
 # aligner par défaut, sans mécanisme de navigation dédié -- même session_state partagé que le
 # reste de l'app (voir radar_preselect_season plus bas pour le même principe).

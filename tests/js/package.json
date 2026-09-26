@@ -1,0 +1,12 @@
+{
+  "name": "tests-grille-effectifs",
+  "private": true,
+  "type": "module",
+  "description": "Tests du JS de la grille de pages/2_Effectifs.py (fonctions d'état avec node, rendu et clics avec jsdom).",
+  "scripts": {
+    "test": "node test_state.mjs && node test_dom.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^24.1.3"
+  }
+}

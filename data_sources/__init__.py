@@ -65,13 +65,13 @@ class SportConfig:
     # award_badges_fn/radar_axes ci-dessus.
     get_team_ranking: Optional[Callable[..., pd.DataFrame]] = None
     team_ranking_metrics: Optional[dict] = None
-    # Page "Rosters" (pages/2_Rosters.py) : get_teams_static() -> liste des franchises actuelles
-    # (id/abbreviation/full_name..., voir nba.get_teams_static) pour la grille de logos cliquable
-    # et la construction des URLs de logo/photo du CDN NBA. Optionnel (None par défaut) -- même
+    # Page "Effectifs" (pages/2_Effectifs.py) : get_teams_static() -> liste des franchises
+    # actuelles (id/abbreviation/full_name..., voir nba.get_teams_static), pour savoir si le logo
+    # actuel d'une franchise est affichable et construire son URL sur le CDN NBA. Optionnel (None par défaut) -- même
     # principe que les champs ci-dessus, la page doit gérer l'absence sans planter.
     get_teams_static: Optional[Callable[[], list]] = None
-    # Page "Mercato" (pages/3_Mercato.py) : get_mercato_lineup(season) -> pd.DataFrame des 6
-    # joueurs affichés sur la carte Mercato de chaque équipe (voir nba.get_mercato_lineup pour le
+    # Page "Effectifs" (pages/2_Effectifs.py) : get_mercato_lineup(season) -> pd.DataFrame des 6
+    # joueurs affichés sur la carte de chaque équipe dans la grille (voir nba.get_mercato_lineup pour le
     # détail complet du tri/étiquetage). get_team_identity(season) -> pd.DataFrame (team_id/nom
     # exact de cette saison-là, voir nba.get_team_identity) utilisé pour décider si le logo actuel
     # d'une franchise est affichable. Optionnels (None par défaut), même principe que les champs

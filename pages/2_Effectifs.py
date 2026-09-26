@@ -1,9 +1,20 @@
 """
-Mercato — composition à 6 joueurs (5 majeur + 6e homme) de chaque équipe pour la saison
-sélectionnée, une carte par équipe, mise en page HORIZONTALE (tuiles photo côte à côte, sur le
-modèle du roster builder de rostermania.com — Call of Duty League). Page séparée du dashboard
-principal (Dashboard.py, qui ne change pas de comportement), même convention que
-pages/1_Radar_de_comparaison.py et pages/2_Rosters.py : script Streamlit à part entière (système
+Effectifs — fusion des anciennes pages Rosters et Mercato. Deux vues, choisies par l'adresse :
+  - grille (pas de paramètre) : la grille Mercato, composition à 6 joueurs (5 majeur + 6e homme)
+    de chaque équipe pour la saison sélectionnée, modifiable (✕, ⇄, +) ;
+  - effectif réel d'une équipe (?saison=2024-25&equipe=BOS) : tous les joueurs de l'équipe
+    d'après get_player_stats, une carte par joueur (photo + pts/reb/pas/PIE). Jamais les
+    modifications de la grille, qui n'existent que dans le navigateur.
+
+Passage de l'une à l'autre : le nom d'équipe de chaque carte est un vrai lien <a href="?saison=..
+&equipe=..">. Clic simple : le JS du composant bloque le rechargement complet (qui ferait perdre la
+session, donc la synchronisation avec main_season) et prévient Python par setTriggerValue ;
+Python place saison/equipe dans st.query_params, ce que Streamlit pousse dans l'historique du
+navigateur (pushState) -- le bouton Précédent ramène donc à la grille, et l'adresse d'un effectif
+est partageable. Clic du milieu / Cmd / Ctrl : lien suivi normalement (nouvel onglet).
+
+Page séparée du dashboard principal (Dashboard.py, qui ne change pas de comportement), même
+convention que pages/1_Radar_de_comparaison.py : script Streamlit à part entière (système
 multi-page natif basé sur le dossier pages/), qui partage st.session_state avec les autres pages
 sans les importer.
 
@@ -15,7 +26,8 @@ directement dans la page -- disponible depuis Streamlit 1.51) : Python prépare 
 saison UNE fois (prepare_season, en cache) et les envoie au composant ; tous les clics (retirer ✕,
 ajouter via une recherche par saisie de texte en cliquant sur une tuile vide, intervertir ⇄ avec
 le voisin de droite, reset par équipe, reset global) sont gérés côté navigateur, sans jamais
-repasser par Python. Pourquoi : la version précédente, 100 % widgets Streamlit (~400 éléments,
+repasser par Python -- seul le clic sur un nom d'équipe (ouverture de l'effectif réel, voir plus
+haut) le fait. Pourquoi : la version précédente, 100 % widgets Streamlit (~400 éléments,
 fragments par carte, fenêtre de recherche unique), répondait en ~10 ms côté Python mais le
 navigateur mettait ~2 s à redessiner la page à chaque clic -- mesuré, voir l'historique git.
 
@@ -38,11 +50,16 @@ l'espace avant le 6e, le ⇄ AI <-> AF ayant alors sa propre ligne libellée ent
 (pas vérifié sur un vrai téléphone -- à confirmer visuellement). Sous les tuiles : ✕ centré sous
 chaque tuile, ⇄ centré sur l'espace entre les deux tuiles qu'il intervertit.
 
-Duplique volontairement le bloc CSS de densité et les gabarits d'URL CDN de pages/2_Rosters.py
-plutôt que de les importer -- un fichier de pages/ est un script à part entière, pas un module
-(voir la docstring de pages/1_Radar_de_comparaison.py pour le pourquoi). Le JS et le CSS du
-composant sont inclus ici en chaînes pour la même raison (un composant v2 ne peut référencer des
-fichiers que s'il est installé comme paquet).
+Duplique volontairement le bloc CSS de densité de Dashboard.py plutôt que de l'importer -- un
+fichier de pages/ est un script à part entière, pas un module (voir la docstring de
+pages/1_Radar_de_comparaison.py pour le pourquoi). Le JS et le CSS du composant sont inclus ici en
+chaînes pour la même raison (un composant v2 ne peut référencer des fichiers que s'il est installé
+comme paquet). Tests du JS : tests/js/ (fonctions d'état avec node, rendu et clics avec jsdom).
+
+Vue effectif réel : photos du CDN public NBA, manquantes pour une partie des joueurs (surtout
+saisons antérieures aux années 2000), affichées comme une image cassée (pas de fallback). Les
+équipes sont celles de la saison (codes de get_mercato_lineup, identité par saison), pas les 30
+franchises actuelles : Seattle 2004-05 affiche bien les SuperSonics et leur effectif.
 
 Identité d'équipe par saison (nom affiché + décision logo actuel vs emblème neutre) : voir
 team_logo_url() plus bas et nba.get_team_identity pour le détail complet (piège des franchises
@@ -58,13 +75,12 @@ import streamlit as st
 
 from data_sources import SPORTS
 
-st.set_page_config(page_title="Mercato — Sports Analytics", page_icon="🔄", layout="wide")
+st.set_page_config(page_title="Effectifs — Sports Analytics", page_icon="👥", layout="wide")
 
-# Même bloc de densité que Dashboard.py / pages/1_Radar_de_comparaison.py / pages/2_Rosters.py
-# (copié tel quel, voir leur commentaire d'origine pour le détail de chaque règle) -- seul le
-# texte du titre (stLogoSpacer::before) change, ci-dessous. Les classes .roster-logo-box/
-# .roster-photo-box et la règle sur les boutons sont copiées telles quelles mais ne servent pas
-# ici (la grille vit dans un composant aux styles isolés, voir MERCATO_GRID_CSS plus bas).
+# Même bloc de densité que Dashboard.py / pages/1_Radar_de_comparaison.py (copié tel quel, voir
+# leur commentaire d'origine pour le détail de chaque règle) -- seul le texte du titre
+# (stLogoSpacer::before) change, ci-dessous. .roster-photo-box : photos de la vue effectif réel
+# (la grille, elle, vit dans un composant aux styles isolés, voir MERCATO_GRID_CSS plus bas).
 st.markdown(
     """
     <style>
@@ -84,7 +100,7 @@ st.markdown(
         align-items: center;
     }
     div[data-testid="stLogoSpacer"]::before {
-        content: "🔄 Mercato";
+        content: "👥 Effectifs";
         font-weight: 700;
         font-size: 1rem;
         white-space: nowrap;
@@ -92,7 +108,7 @@ st.markdown(
     div[data-testid="stAppViewBlockContainer"], .block-container {
         padding-top: 1.25rem !important;
         /* Marges latérales réduites SUR CETTE PAGE UNIQUEMENT (ce bloc <style> est propre à
-           Mercato, pas partagé avec Dashboard.py/Rosters/Radar) -- pour laisser le plus de
+           Effectifs, pas partagé avec Dashboard.py/Radar) -- pour laisser le plus de
            largeur possible aux tuiles (2 cartes x 6 tuiles/carte, voir demande). */
         padding-left: 1.25rem !important;
         padding-right: 1.25rem !important;
@@ -132,39 +148,59 @@ st.markdown(
     section[data-testid="stSidebar"] hr {
         margin: 1rem 0 !important;
     }
-    .roster-logo-box, .roster-photo-box {
+    /* Photos de la vue effectif réel : cadre de taille FIXE (largeur ET hauteur) +
+       object-fit: contain -- chaque portrait mis à l'échelle sans déformation ni rognage, et une
+       taille connue du navigateur avant même le chargement de l'image (voir _img_html). */
+    .roster-photo-box {
         display: flex;
         align-items: center;
         justify-content: center;
         width: 100%;
         background: transparent;
+        height: 140px;
     }
-    .roster-logo-box { height: 110px; }
-    .roster-photo-box { height: 140px; }
-    .roster-logo-box img, .roster-photo-box img {
+    .roster-photo-box img {
         width: 100%;
         height: 100%;
         object-fit: contain;
-    }
-    div[data-testid="stButton"] button {
-        min-height: 2.75rem;
-        white-space: normal;
-        line-height: 1.2;
     }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# MVP : NBA uniquement, même raison que pages/1_Radar_de_comparaison.py et pages/2_Rosters.py.
+# Remet le scroll en haut de page à chaque rerun (ouverture d'un effectif, retour à la grille par
+# le bouton ou par Précédent) : Streamlit ne réinitialise pas la position de scroll du navigateur
+# après un rerun, donc revenir à la grille depuis un effectif scrollé montrait le milieu de la
+# grille, pas son début (repéré en test sur l'ancienne page Rosters). Un clic sur un nom d'équipe
+# remonte déjà la page côté JS (voir scrollPageToTop dans MERCATO_GRID_JS) ; ce script couvre le
+# retour. st.iframe (iframe) est nécessaire ici : un <script> inséré via
+# st.markdown(unsafe_allow_html=True) ne s'exécute pas dans Streamlit (le HTML est injecté en
+# innerHTML, que les navigateurs n'exécutent jamais pour les balises <script>).
+st.iframe(
+    """
+    <style>html, body { margin: 0; overflow: hidden; }</style>
+    <script>
+        const targets = window.parent.document.querySelectorAll(
+            'section.main, [data-testid="stAppViewContainer"], [data-testid="stMain"]'
+        );
+        targets.forEach((el) => el.scrollTo({top: 0, behavior: 'instant'}));
+        window.parent.scrollTo({top: 0, behavior: 'instant'});
+    </script>
+    """,
+    height=1,
+)
+
+# MVP : NBA uniquement, même raison que pages/1_Radar_de_comparaison.py.
 sport = SPORTS["nba"]
-if sport.get_mercato_lineup is None:
-    st.title("🔄 Mercato")
-    st.info("Mercato pas encore disponible pour ce sport.")
+if sport.get_mercato_lineup is None or sport.get_player_stats is None:
+    st.title("👥 Effectifs")
+    st.info("Effectifs pas encore disponibles pour ce sport.")
     st.stop()
 
-# Gabarit photo (headshots) : côté JS, voir HEADSHOT_URL dans MERCATO_GRID_JS.
+# Gabarit photo de la grille : côté JS, voir HEADSHOT_URL dans MERCATO_GRID_JS.
 LOGO_URL_TEMPLATE = "https://cdn.nba.com/logos/nba/{team_id}/global/L/logo.svg"
+HEADSHOT_URL_TEMPLATE = "https://cdn.nba.com/headshots/nba/latest/1040x760/{player_id}.png"
 
 
 teams_static = sport.get_teams_static() if sport.get_teams_static else []
@@ -191,8 +227,8 @@ def team_logo_url(team_code: str, season: str, identity: dict) -> str | None:
     JAMAIS le logo actuel d'une franchise qui portait un autre nom cette saison-là (ex: CHA
     2004-05 = Charlotte Bobcats, même team_id que les Hornets actuels mais nom différent -- pas
     de logo). Fonction isolée : un futur logo historique par époque (ex: le vrai logo des
-    SuperSonics) se branche ici uniquement, sans toucher au reste de la page NI à
-    pages/2_Rosters.py une fois cette fonction partagée."""
+    SuperSonics) se branche ici uniquement, sans toucher au reste de la page (grille ET vue
+    effectif réel l'utilisent toutes les deux)."""
     info = identity.get(team_code)
     if info is None:
         return None
@@ -203,21 +239,147 @@ def team_logo_url(team_code: str, season: str, identity: dict) -> str | None:
     return LOGO_URL_TEMPLATE.format(team_id=team_id)
 
 
-# Saison : même sélecteur que pages/2_Rosters.py, aligné par défaut sur la saison actuellement
-# affichée dans la sidebar principale de Dashboard.py (st.session_state["main_season"], partagé
-# -- voir son commentaire) si elle est valide ici (une vraie saison, pas le mode combiné "Toutes
-# les saisons" qui n'a pas d'équivalent sur cette page). key= (pas index= recalculé) pour que le
-# choix de l'utilisateur SUR CETTE PAGE survive aux reruns suivants, même principe que
-# rosters_season/radar_season. Toujours la saison régulière (get_mercato_lineup ne gère que ça,
-# voir sa docstring).
+# Saison : une saison valide dans l'adresse (?saison=, lien d'effectif partagé ou bouton
+# Précédent) l'emporte ; sinon, par défaut, alignée sur la saison actuellement affichée dans la
+# sidebar principale de Dashboard.py (st.session_state["main_season"], partagé -- voir son
+# commentaire) si elle est valide ici (une vraie saison, pas le mode combiné "Toutes les saisons"
+# qui n'a pas d'équivalent sur cette page). key= (pas index= recalculé) pour que le choix de
+# l'utilisateur SUR CETTE PAGE survive aux reruns suivants, même principe que radar_season.
+# Toujours la saison régulière (get_mercato_lineup ne gère que ça, voir sa docstring).
 _default_season = "2024-25" if "2024-25" in sport.seasons else sport.seasons[0]
-if "mercato_season" not in st.session_state:
+_url_season = st.query_params.get("saison")
+if _url_season in sport.seasons:
+    st.session_state["effectifs_season"] = _url_season
+elif "effectifs_season" not in st.session_state:
     _main_season = st.session_state.get("main_season")
-    st.session_state["mercato_season"] = _main_season if _main_season in sport.seasons else _default_season
-season = st.sidebar.selectbox("Saison", options=sport.seasons, key="mercato_season")
+    st.session_state["effectifs_season"] = _main_season if _main_season in sport.seasons else _default_season
 
 
-@st.cache_data(show_spinner="Chargement de la composition Mercato...")
+def _sync_season_in_url() -> None:
+    # Changement de saison alors que l'adresse porte ?saison= (vue effectif réel, ou lien
+    # partagé) : l'adresse suit (même équipe, nouvelle saison), pour qu'elle reste partageable et
+    # que le prochain rerun ne rétablisse pas l'ancienne saison depuis ?saison=.
+    if "saison" in st.query_params or "equipe" in st.query_params:
+        st.query_params["saison"] = st.session_state["effectifs_season"]
+
+
+season = st.sidebar.selectbox(
+    "Saison", options=sport.seasons, key="effectifs_season", on_change=_sync_season_in_url
+)
+
+
+# --- Vue effectif réel (?equipe=CODE) ----------------------------------------------------------
+
+def _img_html(url: str, alt: str, box_class: str) -> str:
+    # <img> en HTML brut (st.markdown) plutôt que st.image(..., width="stretch") : ce dernier
+    # laisse le NAVIGATEUR calculer la largeur réelle après mise en page du conteneur parent --
+    # un calcul qui, pour de nombreuses images montées d'un coup après un rerun complet, peut ne
+    # pas être terminé avant que Streamlit ne remplace le DOM, laissant certaines images sans
+    # dimension résolue et donc jamais chargées (bug repéré en test sur l'ancienne page Rosters :
+    # seuls 1-2 logos sur 30 réapparaissaient après un aller-retour). Le cadre CSS à taille FIXE
+    # (.roster-photo-box, voir plus haut) + loading="eager"/decoding="async" évitent ce calcul
+    # différé : le navigateur connaît la taille de la zone AVANT même de savoir si l'image a
+    # chargé, et démarre le chargement tout de suite plutôt que d'attendre une passe de mise en
+    # page.
+    return f'<div class="{box_class}"><img src="{url}" alt="{alt}" loading="eager" decoding="async"></div>'
+
+
+@st.cache_data(show_spinner="Chargement des données NBA (nba_api + Kaggle)...")
+def load_players(sport_key: str, season: str) -> pd.DataFrame:
+    return SPORTS[sport_key].get_player_stats(season, force_refresh=False, period="regular")
+
+
+@st.cache_data(show_spinner="Chargement des équipes de la saison...")
+def load_identity(sport_key: str, season: str) -> dict:
+    """{code équipe: (team_id, nom de la franchise CETTE saison-là)}, voir nba.get_team_identity."""
+    sp = SPORTS[sport_key]
+    if sp.get_team_identity is None:
+        return {}
+    df = sp.get_team_identity(season, force_refresh=False)
+    return {r["team"]: (r["team_id"], r["team_name"]) for _, r in df.iterrows()}
+
+
+def _back_to_grid() -> None:
+    st.query_params.clear()
+
+
+team_code = st.query_params.get("equipe")
+if team_code:
+    # Espace au-dessus du bouton : sans lui, ce bouton (premier élément affiché sur cette vue)
+    # se retrouve collé contre la barre d'outils flottante de Streamlit (coupé visuellement en
+    # haut de page, repéré en test sur l'ancienne page Rosters).
+    st.markdown("<div style='height: 0.75rem;'></div>", unsafe_allow_html=True)
+    st.button("← Retour à la grille", on_click=_back_to_grid)
+
+    try:
+        players_df = load_players(sport.key, season)
+    except Exception as exc:
+        st.title("👥 Effectifs")
+        st.error(f"Impossible de charger les joueurs de {season} : {exc}")
+        st.stop()
+    # Identité indisponible (ex. serveur NBA injoignable sans cache) : pas bloquant, le code
+    # d'équipe sert alors de nom et aucun logo n'est affiché.
+    try:
+        identity = load_identity(sport.key, season)
+    except Exception:
+        identity = {}
+
+    roster_df = players_df[players_df["team"] == team_code].sort_values("player").reset_index(drop=True)
+    if roster_df.empty and team_code not in identity:
+        st.title("👥 Effectifs")
+        st.warning(f"Aucune équipe « {team_code} » pour la saison {season}.")
+        st.stop()
+
+    team_name = identity[team_code][1] if team_code in identity else team_code
+    st.title(f"👥 {team_name} — Effectif réel {season}")
+    st.caption(
+        f"Tous les joueurs de l'équipe d'après les statistiques officielles de la saison régulière "
+        f"{season}. Les modifications faites dans la grille (✕, ⇄, +) n'apparaissent pas ici."
+    )
+    logo = team_logo_url(team_code, season, identity)
+    if logo:
+        st.image(logo, width=100)
+
+    if roster_df.empty:
+        st.warning(f"Aucun joueur trouvé pour {team_name} en {season}.")
+    else:
+        N_PLAYER_COLS = 5
+        player_cols = st.columns(N_PLAYER_COLS)
+        for i, row in roster_df.iterrows():
+            with player_cols[i % N_PLAYER_COLS]:
+                with st.container(border=True):
+                    player_id = row.get("player_id")
+                    player_name = row.get("player", "—")
+                    if pd.notna(player_id):
+                        st.markdown(
+                            _img_html(
+                                HEADSHOT_URL_TEMPLATE.format(player_id=int(player_id)),
+                                player_name, "roster-photo-box",
+                            ),
+                            unsafe_allow_html=True,
+                        )
+                    st.markdown(f"**{player_name}**")
+                    pts, reb, ast, pie = (
+                        row.get("points_per_game"), row.get("rebounds_per_game"),
+                        row.get("assists_per_game"), row.get("pie"),
+                    )
+                    if pd.notna(pts) and pd.notna(reb) and pd.notna(ast) and pd.notna(pie):
+                        st.caption(f"{pts:.1f} pts · {reb:.1f} reb · {ast:.1f} pas · PIE {pie:.3f}")
+                    else:
+                        st.caption("Stats indisponibles")
+
+    st.caption(
+        "ℹ️ Photos : CDN public NBA — une partie des joueurs (surtout saisons antérieures aux "
+        "années 2000) n'y ont pas de photo disponible, affichée comme une image cassée (pas de "
+        "fallback)."
+    )
+    st.stop()
+
+
+# --- Vue grille (pas de ?equipe=) ---------------------------------------------------------------
+
+
+@st.cache_data(show_spinner="Chargement des compositions...")
 def prepare_season(sport_key: str, season: str) -> dict:
     """Tout ce qui ne dépend QUE de la saison, calculé une seule fois par saison (puis servi par
     st.cache_data, qui en renvoie une copie : rien ici ne peut altérer les DataFrames du cache
@@ -294,7 +456,7 @@ if prep_error is None:
         prep_error = _failed[season] = str(exc)
 if prep_error is not None:
     st.error(
-        f"Données Mercato indisponibles pour {season} : le serveur de la NBA n'a pas répondu "
+        f"Compositions indisponibles pour {season} : le serveur de la NBA n'a pas répondu "
         "(il bloque souvent les hébergements en ligne). Choisis une autre saison."
     )
     with st.expander("Détail technique"):
@@ -357,7 +519,7 @@ MERCATO_GRID_CSS = r"""
   justify-content: space-between;
   gap: 0.5rem;
 }
-.mg-ident { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+.mg-ident { display: flex; align-items: center; gap: 0.5rem; }
 .mg-logo {
   width: 32px;
   height: 32px;
@@ -379,13 +541,32 @@ MERCATO_GRID_CSS = r"""
   font-weight: 700;
   flex-shrink: 0;
 }
-.mg-team-name {
-  font-weight: 700;
-  font-size: 1rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* Nom d'équipe = lien <a> vers l'effectif réel, présenté comme un bouton (visible comme
+   cliquable même sans survol, sur téléphone). Bordure, rayon et hauteur de "Tout réinitialiser"
+   (.mg-reset-all) pour la cohérence, avec un léger fond en plus. min-height 1.8rem < logo 32px :
+   l'en-tête garde sa hauteur tant que le nom tient sur une ligne. Jamais de coupure au milieu
+   d'un mot (ni ellipse, ni césure) : le nom passe à la ligne entre deux mots si la place manque
+   vraiment (le lien ne rétrécit pas sous la largeur de son mot le plus long). */
+.mg-team-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 1.8rem;
+  padding: 0.1rem 0.6rem;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  border-radius: 0.3rem;
+  background: rgba(128, 128, 128, 0.08);
+  color: inherit;
+  text-decoration: none;
+  line-height: 1.2;
+  cursor: pointer;
 }
+.mg-team-link:hover, .mg-team-link:focus-visible {
+  background: rgba(128, 128, 128, 0.18);
+  border-color: rgba(128, 128, 128, 0.75);
+}
+.mg-team-name { font-weight: 700; font-size: 1rem; }
+.mg-team-arrow { font-size: 0.8rem; opacity: 0.55; flex-shrink: 0; }
 /* Marqueur discret "modifiée" : composition différente de l'origine. */
 .mg-modified {
   font-size: 0.62rem;
@@ -642,7 +823,9 @@ MERCATO_GRID_JS = r"""
 //   1. fonctions d'état PURES (aucun accès au DOM), exportées et testées avec node ;
 //   2. rendu DOM + gestion des clics (export default, appelé par Streamlit au montage puis à
 //      chaque changement de données, c'est-à-dire à chaque changement de saison).
-// Aucun clic ne repasse par Python : l'état vit ici, sauvegardé dans localStorage par saison.
+// Aucun clic ne repasse par Python (sauf le clic sur un nom d'équipe, qui ouvre l'effectif réel
+// via setTriggerValue) : l'état vit ici, sauvegardé dans localStorage par saison.
+// Tests : tests/js/ (voir l'en-tête de chaque fichier pour la commande).
 
 // ---------------------------------------------------------------------------------------------
 // 1. Fonctions d'état pures
@@ -684,6 +867,11 @@ export function displayLastNames(names) {
 
 // Empreinte de la composition d'ORIGINE : un état sauvegardé n'est réutilisé que si elle est
 // identique (sinon les données ont changé depuis, l'état sauvegardé est ignoré).
+// Adresse de la vue effectif réel d'une équipe (relative : même page, voir la docstring Python).
+export function teamHref(season, code) {
+  return `?saison=${encodeURIComponent(season)}&equipe=${encodeURIComponent(code)}`;
+}
+
 export function fingerprint(data) {
   return data.season + "|" + data.teams.map((t) => t.code + ":" + t.slots.map((s) => (s == null ? "-" : s)).join(",")).join(";");
 }
@@ -881,6 +1069,14 @@ function safeLocalStorage() {
   }
 }
 
+// Remonte la page en haut (la vue effectif réel doit s'ouvrir en haut, pas au niveau de la carte
+// cliquée). Composant sans iframe : `document` est directement celui de la page Streamlit.
+function scrollPageToTop() {
+  const targets = document.querySelectorAll('section.main, [data-testid="stAppViewContainer"], [data-testid="stMain"]');
+  targets.forEach((n) => { if (typeof n.scrollTo === "function") n.scrollTo({ top: 0, behavior: "instant" }); });
+  if (typeof window.scrollTo === "function") window.scrollTo({ top: 0, behavior: "instant" });
+}
+
 function createGrid(host) {
   const root = el("div", "mg-root");
   const toolbar = el("div", "mg-toolbar");
@@ -955,7 +1151,15 @@ function createGrid(host) {
     } else {
       ident.append(el("div", "mg-emblem", team.code));
     }
-    ident.append(el("span", "mg-team-name", team.name));
+    const link = el("a", "mg-team-link");
+    const arrow = el("span", "mg-team-arrow", "→");
+    arrow.setAttribute("aria-hidden", "true");
+    link.append(el("span", "mg-team-name", team.name), arrow);
+    link.href = teamHref(data.season, team.code);
+    link.title = `Voir l'effectif réel ${data.season} des ${team.name}`;
+    link.dataset.action = "open-team";
+    link.dataset.team = team.code;
+    ident.append(link);
     const modified = isTeamModified(state, data, team.code);
     if (modified) {
       const mark = el("span", "mg-modified", "modifiée");
@@ -1167,13 +1371,26 @@ function createGrid(host) {
       case "close-search": closeSearch(); break;
       case "reset-team": doResetTeam(team); break;
       case "reset-all": doResetAll(); break;
+      case "open-team": openTeam(ev, team); break;
       default: break;
     }
   }
   root.addEventListener("click", onClick);
 
+  // Clic simple sur un nom d'équipe : pas de rechargement complet de la page (qui ferait perdre
+  // la session Streamlit), Python bascule sur la vue effectif réel via st.query_params. Clic avec
+  // Cmd/Ctrl/Maj/Alt (nouvel onglet/fenêtre) : comportement normal du lien, rien d'intercepté.
+  let trigger = null;
+  function openTeam(ev, team) {
+    if (!trigger || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+    ev.preventDefault();
+    scrollPageToTop();
+    trigger("open_team", team);
+  }
+
   return {
     setData,
+    setTrigger(fn) { trigger = typeof fn === "function" ? fn : null; },
     destroy() {
       clearTimeout(confirmTimer);
       closeSearch();
@@ -1186,13 +1403,14 @@ function createGrid(host) {
 // Appelée par Streamlit au montage, puis de nouveau quand `data` change (changement de saison),
 // avec le MÊME parentElement : la grille existante est réutilisée, pas recréée.
 export default function (component) {
-  const { data, parentElement } = component;
+  const { data, parentElement, setTriggerValue } = component;
   if (!data || !parentElement) return undefined;
   let grid = parentElement.__mercatoGrid;
   if (!grid) {
     grid = createGrid(parentElement);
     parentElement.__mercatoGrid = grid;
   }
+  grid.setTrigger(setTriggerValue);
   grid.setData(data);
   return () => {
     grid.destroy();
@@ -1205,14 +1423,30 @@ export default function (component) {
 # une définition DIFFÉRENTE sous le même nom déclenche un avertissement).
 mercato_grid = st.components.v2.component("mercato_grid", css=MERCATO_GRID_CSS, js=MERCATO_GRID_JS)
 
-st.title("🔄 Mercato")
+st.title("👥 Effectifs")
+st.caption(
+    "Clique sur le nom d'une équipe pour voir son effectif complet, ou refais les compositions "
+    "avec ✕, ⇄ et +."
+)
 st.caption(f"Composition à 6 joueurs par équipe — saison régulière {season}.")
 
+
 # Clé fixe (pas une clé par saison) : le composant n'est pas démonté au changement de saison, sa
-# fonction JS est rappelée avec les nouvelles données. Aucun callback branché -> aucun clic dans
-# la grille ne relance Python. height="content" : hauteur du contenu, pas de barre de défilement
-# interne.
-mercato_grid(key="mercato_grid", data=prep["grid_data"], height="content")
+# fonction JS est rappelée avec les nouvelles données. Seul le déclencheur open_team (clic simple
+# sur un nom d'équipe) relance Python ; les autres clics de la grille, non. height="content" :
+# hauteur du contenu, pas de barre de défilement interne. on_open_team_change : nécessaire pour
+# déclarer le déclencheur ; sa valeur est lue dans le résultat (grid.open_team), PAS dans
+# st.session_state["mercato_grid"] depuis le callback -- cette clé n'existe pas tant que le
+# composant n'a jamais envoyé d'état (KeyError, repéré en test).
+grid = mercato_grid(
+    key="mercato_grid", data=prep["grid_data"], height="content", on_open_team_change=lambda: None
+)
+if grid.open_team:
+    # Clic simple sur un nom d'équipe (setTriggerValue("open_team", code) côté JS) : l'adresse
+    # passe à ?saison=..&equipe=.., que Streamlit pousse dans l'historique du navigateur -- le
+    # rerun affiche la vue effectif réel, et Précédent ramène à la grille.
+    st.query_params.update({"saison": season, "equipe": grid.open_team})
+    st.rerun()
 
 st.caption(
     "Composition = 6 joueurs avec le plus de minutes par match dans leur équipe de fin de "
