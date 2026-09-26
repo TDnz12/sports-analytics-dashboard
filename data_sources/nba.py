@@ -746,18 +746,22 @@ def _fetch_team_stats(season: str, period: str = "regular", force_refresh: bool 
     return result
 
 
-def _fetch_reliability(season: str, force_refresh: bool = False) -> pd.DataFrame:
+def _fetch_reliability(season: str, force_refresh: bool = False) -> tuple[pd.DataFrame, bool]:
     """Calcule, pour chaque joueur, `reliability_pct` = (somme de ses matchs
     joués) / (somme des matchs possibles de la ligue) sur `season` et les
     RELIABILITY_LOOKBACK_SEASONS-1 saisons précédentes disponibles. Une
     recrue avec moins de saisons d'historique n'est simplement sommée que sur
     les saisons où elle a effectivement joué (voir _seasons_lookback), plutôt
     que de planter ou de produire une valeur fausse. Mis en cache par saison
-    (la fenêtre de 3 saisons regardée dépend de la saison demandée)."""
+    (la fenêtre de 3 saisons regardée dépend de la saison demandée).
+
+    Retourne (résultat, complet) : `complet` est False si au moins une saison de la fenêtre
+    n'a pas pu être récupérée -- le résultat est alors partiel (dénominateur trop petit, valeurs
+    faussées) et l'appelant ne doit ni l'afficher ni le persister (voir get_player_stats)."""
     raw_cache_path = NBA_RAW_DIR / "nba_api" / f"reliability_{season}.parquet"
     cached = None if force_refresh else read_cache(raw_cache_path, schema_version=NBA_API_RELIABILITY_SCHEMA_VERSION)
     if cached is not None:
-        return cached
+        return cached, True  # seul un résultat complet est jamais écrit dans ce cache (voir plus bas)
 
     target_seasons = _seasons_lookback(season, RELIABILITY_LOOKBACK_SEASONS)
     frames = []
@@ -772,7 +776,7 @@ def _fetch_reliability(season: str, force_refresh: bool = False) -> pd.DataFrame
         frames.append(stats_s)
 
     if not frames:
-        return pd.DataFrame(columns=["player_id", "reliability_pct"])
+        return pd.DataFrame(columns=["player_id", "reliability_pct"]), False
 
     combined = pd.concat(frames, ignore_index=True)
     agg = combined.groupby("player_id", as_index=False)[["games_played", "games_possible"]].sum()
@@ -788,16 +792,17 @@ def _fetch_reliability(season: str, force_refresh: bool = False) -> pd.DataFrame
     # resterait "valide" indéfiniment vis-à-vis du schema_version (le code n'a pas changé, donc
     # rien ne le distinguerait d'un vrai résultat complet), privant silencieusement des joueurs
     # (ex: ceux absents des saisons qui ont échoué) de leur métrique à chaque rechargement
-    # suivant. On retourne quand même le meilleur résultat disponible à l'appelant (mieux qu'un
-    # crash), simplement sans le graver sur disque.
-    if len(frames) == len(target_seasons):
+    # suivant. Le résultat partiel est quand même retourné, signalé par complete=False, sans être
+    # gravé sur disque.
+    complete = len(frames) == len(target_seasons)
+    if complete:
         write_cache(result, raw_cache_path, schema_version=NBA_API_RELIABILITY_SCHEMA_VERSION)
     else:
         logger.warning(
             "Fiabilité pour %s : résultat partiel (%d/%d saisons), non mis en cache.",
             season, len(frames), len(target_seasons),
         )
-    return result
+    return result, complete
 
 
 # --------------------------------------------------------------------------
@@ -1158,14 +1163,29 @@ def get_player_stats(season: str, force_refresh: bool = False, period: PlayoffMo
     season_cap = NBA_SALARY_CAP_BY_SEASON.get(season)
     working["salary_pct_cap"] = working["salary"] / season_cap if season_cap else np.nan
 
+    # Fiabilité incomplète (une saison de la fenêtre indisponible, ex. erreur réseau) ou en
+    # erreur : valeur laissée manquante (NaN, jamais une valeur partielle donc fausse) ET cache
+    # traité NON écrit, pour qu'il soit recalculé au prochain chargement. L'écrire, même avec
+    # des NaN, le rendrait "valide" indéfiniment vis-à-vis de PROCESSED_SCHEMA_VERSION : la
+    # métrique resterait perdue (ou fausse) jusqu'au prochain changement de schéma. Bug constaté
+    # sur 2022-23 : fiabilité calculée sur 2 saisons sur 3 et persistée telle quelle.
+    reliability_complete = False
     try:
-        reliability = _fetch_reliability(season, force_refresh=force_refresh)
-        working = working.merge(reliability, on="player_id", how="left")
+        reliability, reliability_complete = _fetch_reliability(season, force_refresh=force_refresh)
     except Exception as exc:
         logger.warning("Fiabilité indisponible pour %s : %s", season, exc)
+    if reliability_complete:
+        working = working.merge(reliability, on="player_id", how="left")
+    else:
         working["reliability_pct"] = np.nan
 
-    write_cache(working, processed_path, schema_version=PROCESSED_SCHEMA_VERSION)
+    if reliability_complete:
+        write_cache(working, processed_path, schema_version=PROCESSED_SCHEMA_VERSION)
+    else:
+        logger.warning(
+            "Cache traité %s non écrit : fiabilité incomplète, recalcul au prochain chargement.",
+            processed_path.name,
+        )
     return working
 
 
