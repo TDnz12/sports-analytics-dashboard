@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 
 from data_sources import SPORTS
 
@@ -153,11 +152,12 @@ st.markdown(
 # la grille) : Streamlit ne réinitialise pas la position de scroll du navigateur après un rerun,
 # donc revenir à la grille (plus courte que la page roster qu'on quitte) depuis un roster scrollé
 # laissait le haut de la grille "coupé" -- on voyait le milieu de la nouvelle page, pas son début
-# (repéré en test). components.html (iframe) est nécessaire ici : un <script> inséré via
+# (repéré en test). st.iframe (iframe) est nécessaire ici : un <script> inséré via
 # st.markdown(unsafe_allow_html=True) ne s'exécute pas dans Streamlit (le HTML est injecté en
 # innerHTML, que les navigateurs n'exécutent jamais pour les balises <script>).
-components.html(
+st.iframe(
     """
+    <style>html, body { margin: 0; overflow: hidden; }</style>
     <script>
         const targets = window.parent.document.querySelectorAll(
             'section.main, [data-testid="stAppViewContainer"], [data-testid="stMain"]'
@@ -166,7 +166,7 @@ components.html(
         window.parent.scrollTo({top: 0, behavior: 'instant'});
     </script>
     """,
-    height=0,
+    height=1,
 )
 
 # Titre retiré d'ici : fusionné dans la rangée du bouton replier la sidebar tout en haut (voir le

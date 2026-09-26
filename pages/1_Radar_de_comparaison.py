@@ -378,4 +378,4 @@ if stats_period == "playoffs":
 
 if recap_rows:
     with st.expander(f"📋 Valeurs brutes par axe (stat/match  ·  {display_mode.lower()})", expanded=True):
-        st.dataframe(pd.DataFrame(recap_rows).set_index("Joueur"), use_container_width=True)
+        st.dataframe(pd.DataFrame(recap_rows).set_index("Joueur"), width="stretch")

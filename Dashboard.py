@@ -780,7 +780,7 @@ with st.expander("📋 Voir les données détaillées"):
         display_cols += [c for c in ("games_played", symbol_key) if c not in display_cols]
     st.dataframe(
         plot_df[display_cols].sort_values(y_key, ascending=False).reset_index(drop=True),
-        use_container_width=True,  # voir commentaire ci-dessus (expander méthodologie)
+        width="stretch",  # voir commentaire ci-dessus (expander méthodologie)
     )
 
 # --------------------------------------------------------------------------
