@@ -115,21 +115,29 @@ assert at.title[0].value == "👥 Boston Celtics — Effectif réel 2024-25", at
 assert not list(find(at._tree, "bidi_component")), "grille encore affichée"
 ok("déclencheur open_team -> adresse ?saison=2024-25&equipe=BOS et vue effectif réel")
 
-# 4. Vue effectif réel : mêmes joueurs que l'ancienne page Rosters
-for code, s in [("BOS", "2024-25"), ("DEN", "2010-11"), ("LAL", "1996-97")]:
+# 4. Vue effectif réel : joueurs dont le DERNIER match de la saison est avec l'équipe (game log),
+# équipe NBA d'origine pour un joueur sans match dans le log (voir nba._with_final_game_team).
+for code, s in [("BOS", "2024-25"), ("MEM", "2024-25"), ("DEN", "2010-11"), ("LAL", "1996-97")]:
     at = new({"saison": s, "equipe": code})
-    # Même règle que l'ancienne page Rosters : joueurs de get_player_stats dont l'équipe est
-    # `code`. Comparés triés : AppTest parcourt les cartes colonne par colonne (grille de 5
-    # colonnes), pas dans l'ordre d'affichage.
-    df = sp.get_player_stats(s, period="regular")
-    expected = sorted(df.loc[df["team"] == code, "player"])
+    # Attendu recalculé depuis les caches BRUTS (pas depuis get_player_stats, qui est testé).
+    # Comparés triés : AppTest parcourt les cartes colonne par colonne (grille de 5 colonnes),
+    # pas dans l'ordre d'affichage.
+    raw = pd.read_parquet(ROOT / "data_cache" / "raw" / "nba" / "nba_api" / f"{s}.parquet")
+    log = pd.read_parquet(ROOT / "data_cache" / "raw" / "nba" / "nba_api" / f"game_log_{s}.parquet")
+    last = log.sort_values("game_date").drop_duplicates("player_id", keep="last").set_index("player_id")["team"]
+    final_team = raw["player_id"].map(last).fillna(raw["team"])
+    expected = sorted(raw.loc[final_team == code, "player"])
     assert not at.exception
     assert sorted(names(at)) == expected and expected, (code, s)
     assert at.title[0].value.endswith(f"Effectif réel {s}")
     assert "n'apparaissent pas ici" in at.caption[0].value
     assert [b.label for b in at.button] == ["← Retour à la grille"]
+    if (code, s) == ("MEM", "2024-25"):
+        assert "Desmond Bane" in names(at), "Bane (échangé à ORL en juin 2025) doit être à MEM en 2024-25"
     print(f"   {code} {s}: {len(names(at))} joueurs")
-ok("effectif réel = joueurs de l'équipe (même règle que l'ancienne page Rosters), titre et mention 'réel'")
+at = new({"saison": "2024-25", "equipe": "ORL"})
+assert "Desmond Bane" not in names(at) and "Kentavious Caldwell-Pope" in names(at)
+ok("effectif réel = équipe du dernier match (Bane à MEM, pas à ORL, en 2024-25), titre et mention 'réel'")
 
 # 5. Franchise historique : Seattle 2004-05 (vide dans l'ancienne page Rosters)
 at = new({"saison": "2004-05", "equipe": "SEA"})

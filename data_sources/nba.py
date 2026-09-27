@@ -282,7 +282,8 @@ def get_teams_static() -> list[dict]:
 # calcul modifiée). Un cache disque écrit sous une version différente est
 # automatiquement ignoré et recalculé (voir base.read_cache/write_cache) —
 # évite qu'un ancien cache reste silencieusement incomplet après un déploiement.
-PROCESSED_SCHEMA_VERSION = 19  # v19: retrait complet de la fonctionnalité salaire attendu/valeur ajoutée (expected_salary*, value_added* et toutes leurs variantes, is_rookie_scale, years_experience, impact_hors_scoring_zscore_poste) -- voir METHODOLOGY.md pour le pourquoi
+PROCESSED_SCHEMA_VERSION = 20  # v20: team = équipe du DERNIER match de saison régulière (game log, voir _with_final_game_team) au lieu de la dernière équipe d'inscription renvoyée par la NBA
+# v19: retrait complet de la fonctionnalité salaire attendu/valeur ajoutée (expected_salary*, value_added* et toutes leurs variantes, is_rookie_scale, years_experience, impact_hors_scoring_zscore_poste) -- voir METHODOLOGY.md pour le pourquoi
 # v18: plafond CBA indépendant sur expected_salary/value_added -- retiré en v19, mention gardée pour l'historique
 # v15: ajout value_added_residual_std_pct_cap (bande d'incertitude de la trajectoire par joueur, Dashboard.py) -- colonne retirée en v19
 # v14: extension historique 1996-97→2009-10 (dataset legacy) + colonnes salary_pct_cap/expected_salary_pct_cap/value_added_pct_cap -- les deux dernières retirées en v19
@@ -1102,6 +1103,33 @@ def _enrich_stats(stats: pd.DataFrame, season: str, force_refresh: bool) -> pd.D
     return merged
 
 
+def _with_final_game_team(stats: pd.DataFrame, season: str, force_refresh: bool) -> tuple[pd.DataFrame, bool]:
+    """Remplace `team` de `stats` (TEAM_ABBREVIATION de LeagueDashPlayerStats) par l'équipe du
+    DERNIER match de saison régulière du joueur d'après le game log -- même règle que
+    get_mercato_lineup. La valeur NBA est la dernière équipe d'INSCRIPTION du joueur sur la
+    saison, même sans y avoir joué : échange à la date limite d'un joueur blessé (Ingram
+    NOP -> TOR 2024-25), transaction d'intersaison conclue avant fin juin (Bane MEM -> ORL,
+    juin 2025), contrat court sans match. 97 écarts de 2012-13 à 2025-26, aucun avant (vérifié
+    en septembre 2026). Valeur NBA conservée pour un joueur sans aucun match dans le log.
+
+    Renvoie aussi un booléen "complet" : False si le game log est indisponible (valeurs NBA
+    gardées telles quelles), pour que l'appelant n'écrive pas le cache traité -- même principe
+    que la fiabilité incomplète dans get_player_stats."""
+    try:
+        game_log = _fetch_player_game_log(season, force_refresh=force_refresh)
+    except Exception as exc:
+        logger.warning("Game log indisponible pour %s, équipe NBA d'origine gardée : %s", season, exc)
+        return stats, False
+    final_team = (
+        game_log.sort_values("game_date")
+        .drop_duplicates(subset="player_id", keep="last")
+        .set_index("player_id")["team"]
+    )
+    stats = stats.copy()
+    stats["team"] = stats["player_id"].map(final_team).fillna(stats["team"])
+    return stats, True
+
+
 # --------------------------------------------------------------------------
 # Point d'entrée public
 # --------------------------------------------------------------------------
@@ -1143,6 +1171,10 @@ def get_player_stats(season: str, force_refresh: bool = False, period: PlayoffMo
     # quelle pour period="regular", et comme point de départ (salaire, poste) pour "playoffs"
     # (voir _substitute_playoffs_only_stats, qui ne remplace que les stats de jeu).
     reg_stats_raw = _fetch_nba_api_stats(season, force_refresh=force_refresh)
+    # Équipe du dernier match (voir _with_final_game_team) : corrigée ici, sur la base saison
+    # régulière, elle vaut aussi pour period="playoffs" (_substitute_playoffs_only_stats garde
+    # l'équipe de cette base).
+    reg_stats_raw, final_team_complete = _with_final_game_team(reg_stats_raw, season, force_refresh)
     reg_merged = _enrich_stats(reg_stats_raw, season, force_refresh)
 
     if period == "regular":
@@ -1179,11 +1211,12 @@ def get_player_stats(season: str, force_refresh: bool = False, period: PlayoffMo
     else:
         working["reliability_pct"] = np.nan
 
-    if reliability_complete:
+    if reliability_complete and final_team_complete:
         write_cache(working, processed_path, schema_version=PROCESSED_SCHEMA_VERSION)
     else:
         logger.warning(
-            "Cache traité %s non écrit : fiabilité incomplète, recalcul au prochain chargement.",
+            "Cache traité %s non écrit : fiabilité ou équipe du dernier match incomplète, "
+            "recalcul au prochain chargement.",
             processed_path.name,
         )
     return working
@@ -1270,9 +1303,9 @@ def get_mercato_lineup(season: str, force_refresh: bool = False) -> pd.DataFrame
     toute la saison pour un joueur transféré, ex: Hayward CHA+OKC 2023-24 ressortait à
     24.4 min/match toutes équipes confondues, alors qu'il ne tournait qu'à ~17 min/match une
     fois à OKC) : chaque joueur est rattaché à l'équipe de son DERNIER match de la saison,
-    recalculée depuis game_date -- PAS depuis get_player_stats.team, qui diffère de l'équipe du
-    dernier match réel sur une poignée de joueurs en fin de banc/contrats courts (vérifié
-    empiriquement : 8/572 joueurs en 2023-24). Ses minutes/matchs ne comptent que les matchs
+    recalculée depuis game_date. get_player_stats.team suit désormais la même règle (voir
+    _with_final_game_team ; avant, c'était la dernière équipe d'inscription NBA, différente
+    pour 8/572 joueurs en 2023-24). Ses minutes/matchs ne comptent que les matchs
     joués avec CETTE équipe -- il n'apparaît dans aucune autre carte. Un joueur sans aucun match
     loggé cette saison (blessé toute l'année, jamais appelé en two-way...) n'apparaît dans
     aucune carte : cohérent, impossible de lui attribuer une équipe ou des minutes sans match
@@ -1328,9 +1361,9 @@ def get_mercato_lineup(season: str, force_refresh: bool = False) -> pd.DataFrame
     games_possible = _fetch_team_games_possible(season, force_refresh=force_refresh)
     min_games = math.ceil(0.25 * games_possible)
 
-    # Équipe du DERNIER match de la saison = équipe "de fin de saison" pour ce joueur -- recalculée
-    # ici depuis game_date plutôt que réutilisée depuis get_player_stats.team (voir docstring pour
-    # le pourquoi : 8/572 joueurs en 2023-24 divergent entre les deux).
+    # Équipe du DERNIER match de la saison = équipe "de fin de saison" pour ce joueur -- même
+    # règle que get_player_stats.team (voir _with_final_game_team), recalculée ici depuis le game
+    # log déjà chargé.
     last_game = (
         game_log.sort_values("game_date")
         .drop_duplicates(subset="player_id", keep="last")[["player_id", "team"]]

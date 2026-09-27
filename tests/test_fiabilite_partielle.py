@@ -40,6 +40,7 @@ class FiabilitePartielleTest(unittest.TestCase):
              mock.patch.object(nba, "write_cache", side_effect=lambda df, path, **k: written.append((path, df))), \
              mock.patch.object(nba, "_fetch_nba_api_stats", side_effect=fetch_stats), \
              mock.patch.object(nba, "_fetch_team_games_possible", return_value=82), \
+             mock.patch.object(nba, "_with_final_game_team", side_effect=lambda stats, s, f: (stats, True)), \
              mock.patch.object(nba, "_enrich_stats", side_effect=_fake_enrich):
             result = nba.get_player_stats(SEASON)
         processed = [df for path, df in written if "processed" in str(path)]
