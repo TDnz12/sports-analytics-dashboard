@@ -4,8 +4,8 @@ Dashboard interactif de data analytics sportive — MVP Basketball (NBA).
 Architecture multi-sport : ce fichier ne connaît que l'interface (Streamlit)
 et le registre data_sources.SPORTS. Toute la logique spécifique à un sport
 (scraping, téléchargement, normalisation, cache) vit dans /data_sources.
-Ajouter le rugby/foot/MMA/tennis plus tard = créer data_sources/<sport>.py
-avec la même interface et l'enregistrer dans data_sources/__init__.py.
+Ajouter un sport (le rugby est le prochain prévu, puis MMA/tennis) = créer
+data_sources/<sport>.py avec la même interface et l'enregistrer dans data_sources/__init__.py.
 """
 
 from __future__ import annotations
@@ -150,10 +150,10 @@ st.markdown(
 # commentaire CSS de stLogoSpacer plus haut) pour gagner une ligne entière de hauteur.
 
 sport_keys = list(SPORTS.keys())
-# selectbox (pas radio) : un radio à 5 options (dont 4 pas encore disponibles, juste là pour
-# annoncer la suite) prenait 5 lignes de hauteur dans une sidebar déjà chargée -- retour
-# utilisateur : ça poussait les sélecteurs d'axes (X/Y), bien plus utilisés au quotidien, sous la
-# ligne de flottaison. Un menu déroulant replié fait la même chose sur 1 ligne, rien ne change
+# selectbox (pas radio) : un radio à une option par sport (dont la plupart pas encore
+# disponibles, juste là pour annoncer la suite) prenait une ligne de hauteur par sport dans une
+# sidebar déjà chargée -- retour utilisateur : ça poussait les sélecteurs d'axes (X/Y), bien plus
+# utilisés au quotidien, sous la ligne de flottaison. Un menu déroulant replié fait la même chose sur 1 ligne, rien ne change
 # côté fonctionnel (mêmes options, même format_func).
 sport_choice_key = st.sidebar.selectbox(
     "Sport",

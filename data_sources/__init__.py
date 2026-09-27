@@ -1,7 +1,7 @@
 """
 Registre central des sports supportés par le dashboard.
 
-Chaque module de sport (nba.py, rugby.py, foot.py, ...) doit exposer :
+Chaque module de sport (nba.py, rugby.py, ...) doit exposer :
     - get_player_stats(season: str, force_refresh: bool = False, period: str = "regular")
       -> pd.DataFrame — DataFrame normalisé selon le schéma commun défini dans base.py.
       `period` est optionnel (par défaut "regular", comportement historique) : pour la NBA,
@@ -103,11 +103,10 @@ NBA = SportConfig(
 )
 
 # --- Sports à venir (aucune implémentation, juste affichés "bientôt") ----
-RUGBY = SportConfig(key="rugby", label="Rugby", available=False)
-FOOTBALL = SportConfig(key="football", label="Football", available=False)
+RUGBY = SportConfig(key="rugby", label="Rugby", available=False)  # prochain sport prévu (performance uniquement, sans salaires)
 MMA = SportConfig(key="mma", label="MMA", available=False)
 TENNIS = SportConfig(key="tennis", label="Tennis", available=False)
 
 SPORTS: dict[str, SportConfig] = {
-    s.key: s for s in [NBA, RUGBY, FOOTBALL, MMA, TENNIS]
+    s.key: s for s in [NBA, RUGBY, MMA, TENNIS]
 }

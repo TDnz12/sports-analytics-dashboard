@@ -27,15 +27,53 @@ effectivement joué (`_seasons_lookback` s'arrête à `EARLIEST_SUPPORTED_SEASON
 plutôt que de planter ou de fausser le ratio avec des saisons inexistantes.
 
 Mise en cache par saison, comme le reste — avec une précaution supplémentaire : si une des 3
-saisons de la fenêtre échoue à se charger (ex: timeout réseau), le résultat partiel est quand
-même retourné à l'appelant (pas de crash) mais **n'est volontairement pas mis en cache**, pour
-ne pas figer une donnée incomplète comme si elle était définitive — le prochain chargement
-retente les saisons manquantes au lieu de rester bloqué sur un résultat dégradé.
+saisons de la fenêtre échoue à se charger (ex: timeout réseau), la fiabilité est laissée vide
+pour ce chargement (jamais une valeur calculée sur 2 saisons sur 3, donc fausse) et **rien n'est
+mis en cache**, ni le résultat partiel, ni les données de la saison qui l'utilisent, pour ne pas
+figer une donnée incomplète comme si elle était définitive — le prochain chargement retente les
+saisons manquantes au lieu de rester bloqué sur un résultat dégradé.
 
 Le cache disque (`data_cache/processed/nba/`) est versionné (`PROCESSED_SCHEMA_VERSION` dans
 `nba.py`) : si la logique de calcul change (nouvelle colonne, nouveau calcul dérivé...), un
 cache écrit sous une version différente est automatiquement ignoré et recalculé, sans besoin de
 cliquer sur "Rafraîchir" à la main.
+
+## Composition des effectifs (page Effectifs)
+
+La carte de chaque équipe montre 6 joueurs de la saison régulière (jamais les playoffs) :
+`data_sources/nba.get_mercato_lineup`.
+
+**Rattachement et minutes.** Tout est recalculé depuis le journal des matchs joueur par joueur
+(`LeagueGameLog`), pas depuis les moyennes de la saison : un joueur transféré a une moyenne
+mélangée entre ses équipes (Gordon Hayward 2023-24 ressortait à 24,4 min/match toutes équipes
+confondues, alors qu'il ne jouait qu'environ 17 min/match une fois à OKC). Chaque joueur est
+rattaché à l'équipe de son dernier match de la saison, et ses minutes/match ne comptent que les
+matchs joués avec elle. Il n'apparaît donc que dans une seule carte. Un joueur sans aucun match
+cette saison n'apparaît nulle part.
+
+**Éligibilité.** Un joueur est éligible s'il remplit au moins un de ces trois critères :
+1. au moins 25% des matchs possibles de la saison avec son équipe de fin de saison ;
+2. au moins 50% des matchs de son équipe depuis son premier match avec elle, et au moins 10
+   matchs avec elle — pour un titulaire arrivé en cours de saison (Kyrie Irving, Dallas
+   2022-23 : une vingtaine de matchs sur les 24 restants après son arrivée, sous les 25% de la
+   saison) ; le plancher de 10 matchs évite de rendre éligible un contrat de 10 jours qui joue 3
+   des 4 derniers matchs ;
+3. au moins 25% des matchs de la saison toutes équipes confondues, et au moins 5 matchs avec
+   son équipe de fin de saison — pour un joueur établi dont le passage dans sa dernière équipe
+   est court (Kevin Durant, Phoenix 2022-23 : 8 matchs à Phoenix après une blessure, 47 sur la
+   saison).
+
+Les éligibles passent toujours devant les non-éligibles, quelles que soient leurs minutes ; si
+une équipe a moins de 6 éligibles, les places restantes sont comblées par ses autres joueurs,
+par minutes/match décroissantes. Les critères 2 et 3 élargissent seulement qui est éligible :
+le classement, lui, reste basé sur les minutes/match avec l'équipe de fin de saison.
+
+**Étiquettes de poste.** Les 5 premiers sont triés par groupe de poste (extérieurs, puis
+ailiers, puis intérieurs, minutes décroissantes dans chaque groupe) et reçoivent les étiquettes
+M/A/AI/AF/P dans cet ordre fixe, le 6e homme étant étiqueté "6e". Ce n'est pas le poste réel du
+joueur : une équipe qui aligne 3 extérieurs aura 3 joueurs étiquetés M/A/AI. Compromis assumé,
+plutôt qu'un système de quotas qui écarterait un joueur pour forcer un équilibre 2/2/1. Le 5
+majeur est donc celui des 5 joueurs les plus utilisés, pas forcément le 5 de départ officiel.
 
 ## Métrique défensive individuelle (piste abandonnée)
 
