@@ -1,7 +1,9 @@
 .venv/
 __pycache__/
 *.pyc
-.streamlit/
+# .streamlit/ contient secrets.toml (identifiants) : tout est ignoré sauf config.toml.
+.streamlit/*
+!.streamlit/config.toml
 .DS_Store
 .claude/
 node_modules/

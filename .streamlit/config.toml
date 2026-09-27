@@ -1,0 +1,6 @@
+# Seul fichier de .streamlit/ versionné (voir .gitignore) : secrets.toml & co restent hors de git.
+
+[server]
+# Sert static/ à l'adresse app/static/ : logos d'époque des équipes (static/logos/nba/, voir
+# scripts/update_nba_logos.py), utilisés par pages/2_Effectifs.py.
+enableStaticServing = true

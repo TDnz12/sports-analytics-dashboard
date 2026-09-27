@@ -267,8 +267,8 @@ def get_teams_static() -> list[dict]:
     colonne "team" de get_player_stats reste l'abréviation HISTORIQUE réellement en usage cette
     saison-là (nba_api normalise season par season, voir _fetch_nba_api_stats). Ne pas s'en
     servir pour lister les équipes d'une saison : pages/2_Effectifs.py utilise les codes
-    d'équipe de la saison (get_mercato_lineup/get_team_identity) et ne consulte cette liste que
-    pour savoir si le logo actuel d'une franchise est affichable (voir team_logo_url).
+    d'équipe de la saison (get_mercato_lineup/get_team_identity), et ses logos d'époque viennent
+    d'une table locale (data_sources/nba_logos.csv), plus de cette liste.
 
     lru_cache (pas d'écriture disque via base.write_cache comme le reste du module) : purement
     statique et déjà instantané (aucun appel réseau), un cache disque n'apporterait rien."""
@@ -1445,9 +1445,8 @@ def get_team_identity(season: str, force_refresh: bool = False) -> pd.DataFrame:
     d'un second appel réseau (ex: FranchiseHistory) pour cette donnée.
 
     Utilisé par pages/2_Effectifs.py (grille et vue effectif réel) pour le nom d'équipe de la
-    saison et pour ne montrer le logo ACTUEL d'une franchise que si son identité (team_id + nom)
-    cette saison-là est bien celle d'aujourd'hui -- voir team_logo_url() dans
-    pages/2_Effectifs.py."""
+    saison, et par scripts/update_nba_logos.py pour associer à chaque (saison, équipe) le logo
+    de son époque (table data_sources/nba_logos.csv)."""
     game_log = _fetch_player_game_log(season, force_refresh=force_refresh)
     return game_log[["team", "team_id", "team_name"]].drop_duplicates(subset="team").reset_index(drop=True)
 

@@ -8,6 +8,7 @@ Lancer depuis la racine du projet :  .venv/bin/python tests/apptest_effectifs.py
 
 import json
 import pathlib
+import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -31,14 +32,10 @@ def find(node, typ):
             if ch.type == typ: yield ch
             yield from find(ch, typ)
 
-def logos(at):  # éléments st.image portant une URL de logo NBA
-    out = []
-    def walk(n):
-        for ch in (getattr(n, "children", {}) or {}).values():
-            if ch.type == "image" and "logos/nba" in str(ch.proto): out.append(ch)
-            walk(ch)
-    walk(at._tree)
-    return out
+def logos(at):  # adresses des logos de la vue effectif réel (disque clair, en HTML)
+    return re.findall(r'class="team-logo-disc"><img src="([^"]+)"', "".join(m.value for m in at.markdown))
+
+LOGO_NOTICE = "Logos : propriété de la NBA et de ses équipes, utilisés à titre non commercial."
 
 def names(at):  # noms en gras des cartes joueur
     return [m.value[2:-2] for m in at.markdown if m.value.startswith("**") and m.value.endswith("**")]
@@ -65,16 +62,28 @@ for i, s in enumerate(seasons):
     assert all(len(t["slots"]) == 6 for t in data["teams"]) and set(slot_ids) <= ids and len(slot_ids) == len(set(slot_ids))
     assert [t["name"] for t in data["teams"]] == sorted(t["name"] for t in data["teams"])
     assert set(data) == {"season", "teams", "players", "missing"}, "données du composant modifiées"
-    print(f"   {s}: {len(data['teams'])} équipes, {len(slot_ids)} joueurs en carte")
+    # Logos d'époque servis localement (static/), pour toutes les équipes de la saison.
+    for t in data["teams"]:
+        assert t["logo"] and t["logo"].startswith("app/static/logos/nba/"), (s, t["code"], t["logo"])
+        assert (ROOT / "static" / t["logo"][len("app/static/"):]).is_file(), t["logo"]
+    print(f"   {s}: {len(data['teams'])} équipes, {len(slot_ids)} joueurs en carte, logos locaux")
 assert at.title[0].value == "👥 Effectifs"
 assert at.caption[0].value.startswith("Clique sur le nom d'une équipe pour voir son effectif complet")
-ok("grille sur 4 saisons, titre et phrase d'usage, données du composant inchangées")
+assert at.caption[-1].value == LOGO_NOTICE, "mention des logos absente en bas de la grille"
+ok("grille sur 4 saisons, titre et phrase d'usage, logos locaux, mention en bas, données inchangées")
+
+# 1 bis. Logos d'époque dans la grille (saison 2003-04 : dinosaure des Raptors, Jazz 1996, Sonics)
+at = new(state={"effectifs_season": "2003-04"})
+logo_of = {t["code"]: t["logo"] for t in json.loads(list(find(at._tree, "bidi_component"))[0].proto.json)["teams"]}
+assert logo_of["TOR"].endswith("/1995_toronto-raptors.png") and logo_of["UTA"].endswith("/1996_utah-jazz.png")
+assert logo_of["SEA"].endswith("/2001_seattle-supersonics.png") and logo_of["IND"].endswith("/1990_indiana-pacers.png")
+ok("grille 2003-04 : logos d'époque (Raptors, Jazz, SuperSonics, Pacers)")
 
 # 2. Données envoyées identiques à la fixture des tests JS (empreinte des sauvegardes inchangée)
 at = new(state={"effectifs_season": "2024-25"})
 data = json.loads(list(find(at._tree, "bidi_component"))[0].proto.json)
 assert data == json.load(open(f"{ROOT}/tests/js/fixtures/grid_2024-25.json"))
-ok("données 2024-25 identiques à la fixture (et à l'ancienne page Mercato)")
+ok("données 2024-25 identiques à la fixture des tests JS")
 
 # 3. Clic sur un nom d'équipe simulé (déclencheur open_team, comme le navigateur)
 comp = list(find(at._tree, "bidi_component"))[0]
@@ -107,10 +116,11 @@ ok("effectif réel = joueurs de l'équipe (même règle que l'ancienne page Rost
 # 5. Franchise historique : Seattle 2004-05 (vide dans l'ancienne page Rosters)
 at = new({"saison": "2004-05", "equipe": "SEA"})
 assert not at.exception and at.title[0].value == "👥 Seattle SuperSonics — Effectif réel 2004-05"
-assert len(names(at)) > 0 and len(logos(at)) == 0, "logo actuel affiché pour les SuperSonics"
-assert len(logos(new({"saison": "2024-25", "equipe": "BOS"}))) == 1, "contrôle témoin : logo des Celtics absent"
-print(f"   SEA 2004-05: {len(names(at))} joueurs, pas de logo")
-ok("Seattle 2004-05 : vrai effectif, nom d'époque, pas de logo du Thunder")
+assert len(names(at)) > 0 and logos(at) == ["app/static/logos/nba/2001_seattle-supersonics.png"], logos(at)
+assert at.caption[-1].value == LOGO_NOTICE, "mention des logos absente en bas de la vue effectif"
+assert logos(new({"saison": "2024-25", "equipe": "BOS"})) == ["app/static/logos/nba/1996_boston-celtics.svg"]
+print(f"   SEA 2004-05: {len(names(at))} joueurs, logo des SuperSonics 2001-2008")
+ok("Seattle 2004-05 : vrai effectif, nom et logo d'époque sur disque clair, mention en bas")
 
 # 6. Équipe inconnue, saison invalide dans l'adresse
 at = new({"saison": "2024-25", "equipe": "XXX"})

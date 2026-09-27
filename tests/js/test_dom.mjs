@@ -217,6 +217,22 @@ test("reset global : second clic de confirmation obligatoire", () => {
   assert.deepEqual(saved.slots.LAL, teamOf(data1, "LAL").slots);
 });
 
+test("logo d'époque dans chaque en-tête (adresse locale static/), emblème seulement sans logo", () => {
+  for (const t of data1.teams) {
+    const img = card(t.code).querySelector(".mg-logo img");
+    assert.equal(img.getAttribute("src"), t.logo, t.code);
+    assert.ok(t.logo.startsWith("app/static/logos/nba/"), t.code);
+  }
+  assert.equal($$(".mg-emblem").length, 0);
+  const noLogo = structuredClone(data1);
+  noLogo.season = "test-sans-logo";
+  noLogo.teams[0].logo = null;
+  mountWith(noLogo);
+  assert.equal(card(noLogo.teams[0].code).querySelector(".mg-emblem").textContent, noLogo.teams[0].code);
+  assert.equal(card(noLogo.teams[0].code).querySelector(".mg-logo"), null);
+  mountWith(data1);
+});
+
 test("noms insérés en texte, jamais interprétés comme HTML", () => {
   const evil = structuredClone(data1);
   evil.season = "test-xss";

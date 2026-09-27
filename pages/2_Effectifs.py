@@ -61,14 +61,17 @@ saisons antérieures aux années 2000), affichées comme une image cassée (pas 
 équipes sont celles de la saison (codes de get_mercato_lineup, identité par saison), pas les 30
 franchises actuelles : Seattle 2004-05 affiche bien les SuperSonics et leur effectif.
 
-Identité d'équipe par saison (nom affiché + décision logo actuel vs emblème neutre) : voir
-team_logo_url() plus bas et nba.get_team_identity pour le détail complet (piège des franchises
-ayant déménagé/changé de nom depuis 1996-97, ex: Seattle SuperSonics -> Oklahoma City Thunder,
-même team_id, nom différent -- CHA 2004-05 = Charlotte Bobcats, même abréviation ET même team_id
-que les Hornets actuels mais nom différent aussi).
+Nom d'équipe par saison : nba.get_team_identity (franchises ayant déménagé/changé de nom depuis
+1996-97, ex: Seattle SuperSonics -> Oklahoma City Thunder, même team_id, nom différent). Logo
+d'ÉPOQUE par saison : table data_sources/nba_logos.csv + fichiers static/logos/nba/, générés une
+fois par scripts/update_nba_logos.py et servis par Streamlit (server.enableStaticServing, voir
+.streamlit/config.toml) -- le site ne dépend d'aucune source extérieure pour les logos. Logos :
+propriété de la NBA et de ses équipes, utilisés à titre non commercial (mention en bas de page).
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -164,6 +167,26 @@ st.markdown(
         height: 100%;
         object-fit: contain;
     }
+    /* Logo de la vue effectif réel sur un disque clair (même principe que .mg-logo dans la
+       grille) : les logos sombres (Spurs, Jazz...) restent lisibles sur le thème sombre. */
+    .team-logo-disc {
+        width: 100px;
+        height: 100px;
+        border-radius: 50%;
+        background: #f4f4f4;
+        border: 1px solid rgba(128, 128, 128, 0.3);
+        padding: 12px;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 0.75rem;
+    }
+    .team-logo-disc img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -199,44 +222,31 @@ if sport.get_mercato_lineup is None or sport.get_player_stats is None:
     st.stop()
 
 # Gabarit photo de la grille : côté JS, voir HEADSHOT_URL dans MERCATO_GRID_JS.
-LOGO_URL_TEMPLATE = "https://cdn.nba.com/logos/nba/{team_id}/global/L/logo.svg"
 HEADSHOT_URL_TEMPLATE = "https://cdn.nba.com/headshots/nba/latest/1040x760/{player_id}.png"
 
-
-teams_static = sport.get_teams_static() if sport.get_teams_static else []
-team_by_id = {t["id"]: t for t in teams_static}
-
-
-def _normalize_team_name(name: str) -> str:
-    # nba_api abrège parfois la ville en "LA" (ex: "LA Clippers") alors que get_teams_static()
-    # (nba_api.stats.static.teams) écrit toujours la ville en toutes lettres ("Los Angeles
-    # Clippers") -- pure différence d'écriture, PAS un changement d'identité de franchise.
-    # Repéré en comparant les 30 équipes de la saison la plus récente à get_teams_static() :
-    # seul ce cas apparaît (les 29 autres correspondent déjà exactement). Ciblé sur le préfixe
-    # "LA " précisément plutôt que sur le seul surnom : comparer par surnom seul laisserait
-    # passer à tort "New Jersey Nets" pour "Brooklyn Nets" (le surnom "Nets" ne change pas alors
-    # que la ville/l'identité, si).
-    return "Los Angeles " + name[3:] if name.startswith("LA ") else name
+# Logos d'époque : table saison -> fichier (scripts/update_nba_logos.py) et adresse de service des
+# fichiers de static/ (relative : fonctionne aussi dans le composant de la grille, sans iframe, et
+# sur Community Cloud).
+LOGO_TABLE = Path(__file__).resolve().parent.parent / "data_sources" / "nba_logos.csv"
+LOGO_URL_TEMPLATE = "app/static/logos/nba/{file}"
+LOGO_NOTICE = "Logos : propriété de la NBA et de ses équipes, utilisés à titre non commercial."
 
 
-def team_logo_url(team_code: str, season: str, identity: dict) -> str | None:
-    """Logo NBA de `team_code` pour `season`, UNIQUEMENT si l'identité de cette saison-là
-    (team_id + nom, voir `identity` = nba.get_team_identity) est celle de la franchise ACTUELLE
-    (même ville, même nom qu'aujourd'hui, à l'écriture "LA"/"Los Angeles" près -- voir
-    _normalize_team_name) -- sinon None, l'appelant doit alors afficher un emblème neutre,
-    JAMAIS le logo actuel d'une franchise qui portait un autre nom cette saison-là (ex: CHA
-    2004-05 = Charlotte Bobcats, même team_id que les Hornets actuels mais nom différent -- pas
-    de logo). Fonction isolée : un futur logo historique par époque (ex: le vrai logo des
-    SuperSonics) se branche ici uniquement, sans toucher au reste de la page (grille ET vue
-    effectif réel l'utilisent toutes les deux)."""
-    info = identity.get(team_code)
-    if info is None:
-        return None
-    team_id, team_name_this_season = info
-    current = team_by_id.get(team_id)
-    if current is None or current["full_name"] != _normalize_team_name(team_name_this_season):
-        return None
-    return LOGO_URL_TEMPLATE.format(team_id=team_id)
+@st.cache_data(show_spinner=False)
+def load_logo_table() -> dict[tuple[str, str], str]:
+    """{(saison, code équipe): nom du fichier dans static/logos/nba/}."""
+    df = pd.read_csv(LOGO_TABLE, dtype=str)
+    return {(r.season, r.team): r.file for r in df.itertuples()}
+
+
+def team_logo_url(team_code: str, season: str) -> str | None:
+    """Logo de `team_code` tel qu'il était pendant `season` (ex: dinosaure des Raptors en
+    2003-04, SuperSonics en 2004-05), ou None si la table n'en a pas -- l'appelant affiche
+    alors un emblème neutre. La table couvre toutes les (saison, équipe) de 1996-97 à 2025-26
+    (vérifié par tests/test_nba_logos.py) : None ne devrait arriver que pour une saison ajoutée
+    sans relancer scripts/update_nba_logos.py. Grille ET vue effectif réel l'utilisent."""
+    file = load_logo_table().get((season, team_code))
+    return LOGO_URL_TEMPLATE.format(file=file) if file else None
 
 
 # Saison : une saison valide dans l'adresse (?saison=, lien d'effectif partagé ou bouton
@@ -318,7 +328,7 @@ if team_code:
         st.error(f"Impossible de charger les joueurs de {season} : {exc}")
         st.stop()
     # Identité indisponible (ex. serveur NBA injoignable sans cache) : pas bloquant, le code
-    # d'équipe sert alors de nom et aucun logo n'est affiché.
+    # d'équipe sert alors de nom (le logo, lui, vient de la table locale, voir team_logo_url).
     try:
         identity = load_identity(sport.key, season)
     except Exception:
@@ -336,9 +346,14 @@ if team_code:
         f"Tous les joueurs de l'équipe d'après les statistiques officielles de la saison régulière "
         f"{season}. Les modifications faites dans la grille (✕, ⇄, +) n'apparaissent pas ici."
     )
-    logo = team_logo_url(team_code, season, identity)
+    logo = team_logo_url(team_code, season)
     if logo:
-        st.image(logo, width=100)
+        # Disque clair derrière le logo (logos sombres lisibles sur fond sombre, ex. Spurs, Jazz),
+        # en HTML plutôt que st.image, qui ne sait pas dessiner ce fond.
+        st.markdown(
+            f'<div class="team-logo-disc"><img src="{logo}" alt="{team_code}"></div>',
+            unsafe_allow_html=True,
+        )
 
     if roster_df.empty:
         st.warning(f"Aucun joueur trouvé pour {team_name} en {season}.")
@@ -373,6 +388,7 @@ if team_code:
         "années 2000) n'y ont pas de photo disponible, affichée comme une image cassée (pas de "
         "fallback)."
     )
+    st.caption(LOGO_NOTICE)
     st.stop()
 
 
@@ -432,7 +448,7 @@ def prepare_season(sport_key: str, season: str) -> dict:
 
     team_names = {t: (identity[t][1] if t in identity else t) for t in initial_lineups}
     teams = [
-        {"code": t, "name": team_names[t], "logo": team_logo_url(t, season, identity),
+        {"code": t, "name": team_names[t], "logo": team_logo_url(t, season),
          "slots": initial_lineups[t]}
         for t in sorted(initial_lineups, key=lambda t: team_names[t])
     ]
@@ -520,6 +536,8 @@ MERCATO_GRID_CSS = r"""
   gap: 0.5rem;
 }
 .mg-ident { display: flex; align-items: center; gap: 0.5rem; }
+/* Logo sur un disque clair : les logos sombres (Spurs, Jazz...) restent lisibles sur le thème
+   sombre. Même taille totale qu'avant (32 px), l'en-tête ne grandit pas. */
 .mg-logo {
   width: 32px;
   height: 32px;
@@ -527,6 +545,10 @@ MERCATO_GRID_CSS = r"""
   display: flex;
   align-items: center;
   justify-content: center;
+  border-radius: 50%;
+  background: #f4f4f4;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  padding: 3px;
 }
 .mg-logo img { width: 100%; height: 100%; object-fit: contain; }
 .mg-emblem {
@@ -1456,3 +1478,4 @@ st.caption(
     "ne pas correspondre au poste exact du joueur. Le 5 majeur correspond aux 5 joueurs les "
     "plus utilisés, pas forcément au 5 de départ officiel."
 )
+st.caption(LOGO_NOTICE)
