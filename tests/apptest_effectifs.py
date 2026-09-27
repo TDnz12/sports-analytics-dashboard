@@ -36,6 +36,16 @@ def logos(at):  # adresses des logos de la vue effectif réel (disque clair, en 
     return re.findall(r'class="team-logo-disc"><img src="([^"]+)"', "".join(m.value for m in at.markdown))
 
 LOGO_NOTICE = "Logos : propriété de la NBA et de ses équipes, utilisés à titre non commercial."
+PHOTO_NOTICE = ("Photos : portrait de la saison à partir de 2015-16 quand il existe, sinon portrait "
+                "le plus récent du joueur.")
+CDN = "https://cdn.nba.com/headshots/nba"
+
+def photos(at):  # (src, repli) des photos de la vue effectif réel
+    return re.findall(r'class="roster-photo-box"><img src="([^"]+)"(?: data-fallback="([^"]+)")?',
+                      "".join(m.value for m in at.markdown))
+
+def fallback_scripts(at):  # st.html du repli des photos (vue effectif réel)
+    return [h.proto for h in find(at._tree, "html")]
 
 def names(at):  # noms en gras des cartes joueur
     return [m.value[2:-2] for m in at.markdown if m.value.startswith("**") and m.value.endswith("**")]
@@ -61,7 +71,14 @@ for i, s in enumerate(seasons):
     slot_ids = [pid for t in data["teams"] for pid in t["slots"] if pid is not None]
     assert all(len(t["slots"]) == 6 for t in data["teams"]) and set(slot_ids) <= ids and len(slot_ids) == len(set(slot_ids))
     assert [t["name"] for t in data["teams"]] == sorted(t["name"] for t in data["teams"])
-    assert set(data) == {"season", "teams", "players", "missing"}, "données du composant modifiées"
+    assert set(data) == {"season", "teams", "players", "missing", "photo_team_ids"}, "données du composant modifiées"
+    # Portraits de saison : équipe du premier match, à partir de 2015-16 seulement (clés en texte : JSON).
+    if int(s[:4]) >= 2015:
+        first = sp.get_first_game_teams(s)
+        assert data["photo_team_ids"] == {str(p): t for p, t in zip(first["player_id"], first["team_id"])}
+        assert set(map(str, slot_ids)) <= set(data["photo_team_ids"])
+    else:
+        assert data["photo_team_ids"] == {}
     # Logos d'époque servis localement (static/), pour toutes les équipes de la saison.
     for t in data["teams"]:
         assert t["logo"] and t["logo"].startswith("app/static/logos/nba/"), (s, t["code"], t["logo"])
@@ -70,7 +87,8 @@ for i, s in enumerate(seasons):
 assert at.title[0].value == "👥 Effectifs"
 assert at.caption[0].value.startswith("Clique sur le nom d'une équipe pour voir son effectif complet")
 assert at.caption[-1].value == LOGO_NOTICE, "mention des logos absente en bas de la grille"
-ok("grille sur 4 saisons, titre et phrase d'usage, logos locaux, mention en bas, données inchangées")
+assert at.caption[-2].value == PHOTO_NOTICE, "mention des photos absente en bas de la grille"
+ok("grille sur 4 saisons, titre et phrase d'usage, logos locaux, portraits de saison dès 2015-16, mentions en bas")
 
 # 1 bis. Logos d'époque dans la grille (saison 2003-04 : dinosaure des Raptors, Jazz 1996, Sonics)
 at = new(state={"effectifs_season": "2003-04"})
@@ -121,6 +139,25 @@ assert at.caption[-1].value == LOGO_NOTICE, "mention des logos absente en bas de
 assert logos(new({"saison": "2024-25", "equipe": "BOS"})) == ["app/static/logos/nba/1996_boston-celtics.svg"]
 print(f"   SEA 2004-05: {len(names(at))} joueurs, logo des SuperSonics 2001-2008")
 ok("Seattle 2004-05 : vrai effectif, nom et logo d'époque sur disque clair, mention en bas")
+
+# 5 bis. Photos de la vue effectif réel : portrait de la saison (équipe du premier match) avec
+# repli sur le portrait actuel à partir de 2015-16, portrait actuel seul avant.
+at = new({"saison": "2023-24", "equipe": "IND"})
+first = dict(zip(sp.get_first_game_teams("2023-24")["player_id"], sp.get_first_game_teams("2023-24")["team_id"]))
+ph = photos(at)
+assert ph and len(ph) == len(names(at)), (len(ph), len(names(at)))
+for src, fb in ph:
+    pid = int(fb.rsplit("/", 1)[1][:-4])
+    assert fb == f"{CDN}/latest/1040x760/{pid}.png" and src == f"{CDN}/{first[pid]}/2023/1040x760/{pid}.png", (src, fb)
+siakam = int(sp.get_player_stats("2023-24").set_index("player").loc["Pascal Siakam", "player_id"])
+assert (f"{CDN}/1610612761/2023/1040x760/{siakam}.png", f"{CDN}/latest/1040x760/{siakam}.png") in ph, "Siakam sous TOR"
+scripts = fallback_scripts(at)
+assert len(scripts) == 1 and scripts[0].unsafe_allow_javascript and "data-fallback" in scripts[0].body
+assert at.caption[-2].value == PHOTO_NOTICE and at.caption[-1].value == LOGO_NOTICE
+at = new({"saison": "2004-05", "equipe": "SEA"})
+assert photos(at) and all(src.startswith(f"{CDN}/latest/") and not fb for src, fb in photos(at))
+assert fallback_scripts(at) == [] and at.caption[-2].value == PHOTO_NOTICE
+ok("photos : IND 2023-24 portrait de saison + repli (Siakam sous TOR), SEA 2004-05 portrait actuel seul")
 
 # 6. Équipe inconnue, saison invalide dans l'adresse
 at = new({"saison": "2024-25", "equipe": "XXX"})

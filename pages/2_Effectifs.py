@@ -56,8 +56,12 @@ pages/1_Radar_de_comparaison.py pour le pourquoi). Le JS et le CSS du composant 
 chaînes pour la même raison (un composant v2 ne peut référencer des fichiers que s'il est installé
 comme paquet). Tests du JS : tests/js/ (fonctions d'état avec node, rendu et clics avec jsdom).
 
-Vue effectif réel : photos du CDN public NBA, manquantes pour une partie des joueurs (surtout
-saisons antérieures aux années 2000), affichées comme une image cassée (pas de fallback). Les
+Photos (grille et vue effectif réel) : CDN public NBA. À partir de 2015-16, portrait de la
+saison, classé sur le CDN par équipe et par saison (aucun avant : vérifié en septembre 2026) et
+pris sous l'équipe du PREMIER match du joueur (nba.get_first_game_teams) : un joueur transféré
+apparaît avec le maillot de sa première équipe, ce qui montre le transfert. S'il manque (signature
+en cours de saison...), le navigateur bascule sur le portrait actuel. Avant 2015-16 : portrait
+actuel seul. Le CDN renvoie une silhouette grise pour un joueur sans portrait actuel. Les
 équipes sont celles de la saison (codes de get_mercato_lineup, identité par saison), pas les 30
 franchises actuelles : Seattle 2004-05 affiche bien les SuperSonics et leur effectif.
 
@@ -223,6 +227,14 @@ if sport.get_mercato_lineup is None or sport.get_player_stats is None:
 
 # Gabarit photo de la grille : côté JS, voir HEADSHOT_URL dans MERCATO_GRID_JS.
 HEADSHOT_URL_TEMPLATE = "https://cdn.nba.com/headshots/nba/latest/1040x760/{player_id}.png"
+# Portraits par équipe et par saison : le CDN n'en a qu'à partir de 2015-16 (403 pour toutes les
+# saisons antérieures testées). Côté JS, voir headshotSources dans MERCATO_GRID_JS.
+FIRST_SEASON_HEADSHOT_YEAR = 2015
+SEASON_HEADSHOT_URL_TEMPLATE = "https://cdn.nba.com/headshots/nba/{team_id}/{year}/1040x760/{player_id}.png"
+PHOTO_NOTICE = (
+    "Photos : portrait de la saison à partir de 2015-16 quand il existe, sinon portrait le plus "
+    "récent du joueur."
+)
 
 # Logos d'époque : table saison -> fichier (scripts/update_nba_logos.py) et adresse de service des
 # fichiers de static/ (relative : fonctionne aussi dans le composant de la grille, sans iframe, et
@@ -247,6 +259,18 @@ def team_logo_url(team_code: str, season: str) -> str | None:
     sans relancer scripts/update_nba_logos.py. Grille ET vue effectif réel l'utilisent."""
     file = load_logo_table().get((season, team_code))
     return LOGO_URL_TEMPLATE.format(file=file) if file else None
+
+
+def season_photo_team_ids(sport_key: str, season: str) -> dict[int, int]:
+    """{player_id: team_id de l'équipe de son premier match} pour les saisons à portrait
+    d'époque (2015-16 et suivantes, voir nba.get_first_game_teams), {} avant : les deux vues
+    n'utilisent alors que le portrait actuel. Pas mis en cache ici : les appelants le sont
+    (prepare_season, load_photo_team_ids)."""
+    sp = SPORTS[sport_key]
+    if int(season[:4]) < FIRST_SEASON_HEADSHOT_YEAR or sp.get_first_game_teams is None:
+        return {}
+    df = sp.get_first_game_teams(season, force_refresh=False)
+    return {int(pid): int(tid) for pid, tid in zip(df["player_id"], df["team_id"])}
 
 
 # Saison : une saison valide dans l'adresse (?saison=, lien d'effectif partagé ou bouton
@@ -280,7 +304,34 @@ season = st.sidebar.selectbox(
 
 # --- Vue effectif réel (?equipe=CODE) ----------------------------------------------------------
 
-def _img_html(url: str, alt: str, box_class: str) -> str:
+# Repli des photos de la vue effectif réel sur le portrait actuel. Pas d'attribut onerror :
+# st.markdown l'ignore (HTML rendu par React) et st.html le retire (DOMPurify), même avec
+# unsafe_allow_javascript. Un seul script écoute donc les erreurs de chargement d'image sur tout
+# le document (phase de capture : l'événement error ne remonte pas) et remplace la source d'une
+# <img data-fallback> par son repli, une seule fois. Il traite aussi les images déjà en échec
+# quand il s'exécute (ordre de montage des éléments non garanti).
+PHOTO_FALLBACK_SCRIPT = """<script>
+(() => {
+  const swap = (img) => {
+    const fallback = img.dataset.fallback;
+    if (!fallback) return;
+    delete img.dataset.fallback;
+    img.src = fallback;
+  };
+  if (!window.__effectifsPhotoFallback) {
+    window.__effectifsPhotoFallback = true;
+    document.addEventListener("error", (e) => {
+      if (e.target instanceof HTMLImageElement) swap(e.target);
+    }, true);
+  }
+  document.querySelectorAll("img[data-fallback]").forEach((img) => {
+    if (img.complete && img.naturalWidth === 0) swap(img);
+  });
+})();
+</script>"""
+
+
+def _img_html(url: str, alt: str, box_class: str, fallback: str | None = None) -> str:
     # <img> en HTML brut (st.markdown) plutôt que st.image(..., width="stretch") : ce dernier
     # laisse le NAVIGATEUR calculer la largeur réelle après mise en page du conteneur parent --
     # un calcul qui, pour de nombreuses images montées d'un coup après un rerun complet, peut ne
@@ -290,8 +341,12 @@ def _img_html(url: str, alt: str, box_class: str) -> str:
     # (.roster-photo-box, voir plus haut) + loading="eager"/decoding="async" évitent ce calcul
     # différé : le navigateur connaît la taille de la zone AVANT même de savoir si l'image a
     # chargé, et démarre le chargement tout de suite plutôt que d'attendre une passe de mise en
-    # page.
-    return f'<div class="{box_class}"><img src="{url}" alt="{alt}" loading="eager" decoding="async"></div>'
+    # page. fallback : voir PHOTO_FALLBACK_SCRIPT.
+    fallback_attr = f' data-fallback="{fallback}"' if fallback else ""
+    return (
+        f'<div class="{box_class}"><img src="{url}"{fallback_attr} alt="{alt}" '
+        f'loading="eager" decoding="async"></div>'
+    )
 
 
 @st.cache_data(show_spinner="Chargement des données NBA (nba_api + Kaggle)...")
@@ -307,6 +362,11 @@ def load_identity(sport_key: str, season: str) -> dict:
         return {}
     df = sp.get_team_identity(season, force_refresh=False)
     return {r["team"]: (r["team_id"], r["team_name"]) for _, r in df.iterrows()}
+
+
+@st.cache_data(show_spinner=False)
+def load_photo_team_ids(sport_key: str, season: str) -> dict[int, int]:
+    return season_photo_team_ids(sport_key, season)
 
 
 def _back_to_grid() -> None:
@@ -333,6 +393,11 @@ if team_code:
         identity = load_identity(sport.key, season)
     except Exception:
         identity = {}
+    # Indisponible : pas bloquant, portrait actuel pour tout le monde.
+    try:
+        photo_team_ids = load_photo_team_ids(sport.key, season)
+    except Exception:
+        photo_team_ids = {}
 
     roster_df = players_df[players_df["team"] == team_code].sort_values("player").reset_index(drop=True)
     if roster_df.empty and team_code not in identity:
@@ -366,13 +431,19 @@ if team_code:
                     player_id = row.get("player_id")
                     player_name = row.get("player", "—")
                     if pd.notna(player_id):
-                        st.markdown(
-                            _img_html(
-                                HEADSHOT_URL_TEMPLATE.format(player_id=int(player_id)),
-                                player_name, "roster-photo-box",
-                            ),
-                            unsafe_allow_html=True,
-                        )
+                        latest = HEADSHOT_URL_TEMPLATE.format(player_id=int(player_id))
+                        photo_team_id = photo_team_ids.get(int(player_id))
+                        if photo_team_id is None:
+                            photo = _img_html(latest, player_name, "roster-photo-box")
+                        else:
+                            photo = _img_html(
+                                SEASON_HEADSHOT_URL_TEMPLATE.format(
+                                    team_id=photo_team_id, year=int(season[:4]),
+                                    player_id=int(player_id),
+                                ),
+                                player_name, "roster-photo-box", fallback=latest,
+                            )
+                        st.markdown(photo, unsafe_allow_html=True)
                     st.markdown(f"**{player_name}**")
                     pts, reb, ast, pie = (
                         row.get("points_per_game"), row.get("rebounds_per_game"),
@@ -383,11 +454,9 @@ if team_code:
                     else:
                         st.caption("Stats indisponibles")
 
-    st.caption(
-        "ℹ️ Photos : CDN public NBA — une partie des joueurs (surtout saisons antérieures aux "
-        "années 2000) n'y ont pas de photo disponible, affichée comme une image cassée (pas de "
-        "fallback)."
-    )
+    if photo_team_ids:
+        st.html(PHOTO_FALLBACK_SCRIPT, unsafe_allow_javascript=True)
+    st.caption(PHOTO_NOTICE)
     st.caption(LOGO_NOTICE)
     st.stop()
 
@@ -406,7 +475,9 @@ def prepare_season(sport_key: str, season: str) -> dict:
         triées par nom affiché ;
       - players : [[player_id, nom, équipe], ...] de TOUS les joueurs de la saison (recherche),
         triés par nom ;
-      - missing : player_id dont le poste est inconnu dans la composition d'origine (⚠️).
+      - missing : player_id dont le poste est inconnu dans la composition d'origine (⚠️) ;
+      - photo_team_ids : {player_id: team_id du premier match}, voir season_photo_team_ids ({}
+        avant 2015-16 ou si le game log est indisponible, non bloquant).
     Lève l'exception de get_mercato_lineup si la composition est introuvable (jamais mise en
     cache par Streamlit, voir l'appelant) ; un échec de get_player_stats, lui, n'est pas
     bloquant (players_error, la recherche se limite alors aux joueurs déjà présents dans les
@@ -454,10 +525,15 @@ def prepare_season(sport_key: str, season: str) -> dict:
     ]
     players = [[pid, name, team] for pid, (name, team) in sorted(player_info.items(), key=lambda kv: kv[1][0])]
     missing = sorted({int(pid) for pid in df.loc[df["position_missing"], "player_id"]})
+    try:
+        photo_team_ids = season_photo_team_ids(sport_key, season)
+    except Exception:
+        photo_team_ids = {}
     return {
         "empty": False,
         "players_error": players_error,
-        "grid_data": {"season": season, "teams": teams, "players": players, "missing": missing},
+        "grid_data": {"season": season, "teams": teams, "players": players, "missing": missing,
+                      "photo_team_ids": photo_team_ids},
     }
 
 
@@ -856,6 +932,7 @@ MERCATO_GRID_JS = r"""
 export const SLOT_LABELS = ["M", "A", "AI", "AF", "P", "6e"];
 export const STORAGE_PREFIX = "mercato_v1_";
 const HEADSHOT_URL = (id) => `https://cdn.nba.com/headshots/nba/latest/1040x760/${id}.png`;
+const SEASON_HEADSHOT_URL = (teamId, year, id) => `https://cdn.nba.com/headshots/nba/${teamId}/${year}/1040x760/${id}.png`;
 const NAME_SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv", "v"]);
 
 // Minuscules sans accents : "Jokić" -> "jokic" (recherche insensible aux accents).
@@ -885,6 +962,17 @@ export function displayLastNames(names) {
     if (counts.get(ln.toLowerCase()) > 1 && full.trim()) return `${full.trim()[0]}. ${ln}`.toUpperCase();
     return ln.toUpperCase();
   });
+}
+
+// Photo d'un joueur : portrait de la saison sous l'équipe de son PREMIER match (photo_team_ids,
+// 2015-16 et suivantes, voir season_photo_team_ids côté Python), quelle que soit la carte où il
+// se trouve (composition d'origine, ajout par la recherche, déplacement), avec le portrait actuel
+// en repli ; portrait actuel seul sinon.
+export function headshotSources(data, pid) {
+  const latest = HEADSHOT_URL(pid);
+  const teamId = data.photo_team_ids[pid];
+  if (teamId == null) return { src: latest, fallback: null };
+  return { src: SEASON_HEADSHOT_URL(teamId, parseInt(data.season, 10), pid), fallback: latest };
 }
 
 // Empreinte de la composition d'ORIGINE : un état sauvegardé n'est réutilisé que si elle est
@@ -1232,7 +1320,10 @@ function createGrid(host) {
       const tile = el("div", "mg-tile");
       tile.title = full;
       const img = el("img");
-      img.src = HEADSHOT_URL(pid);
+      const photo = headshotSources(data, pid);
+      img.src = photo.src;
+      // Portrait de la saison absent (signature en cours de saison...) : portrait actuel.
+      if (photo.fallback) img.addEventListener("error", () => { img.src = photo.fallback; }, { once: true });
       img.alt = full;
       img.loading = "lazy";
       img.decoding = "async";
@@ -1478,4 +1569,5 @@ st.caption(
     "ne pas correspondre au poste exact du joueur. Le 5 majeur correspond aux 5 joueurs les "
     "plus utilisés, pas forcément au 5 de départ officiel."
 )
+st.caption(PHOTO_NOTICE)
 st.caption(LOGO_NOTICE)

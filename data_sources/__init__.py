@@ -75,9 +75,11 @@ class SportConfig:
     # détail complet du tri/étiquetage). get_team_identity(season) -> pd.DataFrame (team_id/nom
     # exact de cette saison-là, voir nba.get_team_identity) utilisé pour décider si le logo actuel
     # d'une franchise est affichable. Optionnels (None par défaut), même principe que les champs
-    # ci-dessus.
+    # ci-dessus. get_first_game_teams(season) -> pd.DataFrame (player_id, team, team_id du premier
+    # match de la saison, voir nba.get_first_game_teams) : équipe des portraits de saison.
     get_mercato_lineup: Optional[Callable[..., pd.DataFrame]] = None
     get_team_identity: Optional[Callable[..., pd.DataFrame]] = None
+    get_first_game_teams: Optional[Callable[..., pd.DataFrame]] = None
 
 
 # --- Sport actif ---------------------------------------------------------
@@ -100,6 +102,7 @@ NBA = SportConfig(
     get_teams_static=nba.get_teams_static,
     get_mercato_lineup=nba.get_mercato_lineup,
     get_team_identity=nba.get_team_identity,
+    get_first_game_teams=nba.get_first_game_teams,
 )
 
 # --- Sports à venir (aucune implémentation, juste affichés "bientôt") ----

@@ -68,6 +68,30 @@ test("montage : 30 cartes, 180 tuiles photo, étiquettes M/A/AI/AF/P/6e, pas de 
   assert.ok(card("DEN").querySelector(".mg-team-name").textContent.includes("Denver"));
 });
 
+const CDN = "https://cdn.nba.com/headshots/nba";
+const imgOf = (code, pid) => card(code).querySelector(`.mg-tile img[src$="/${pid}.png"]`);
+
+test("photo : portrait de la saison sous l'équipe du premier match, repli unique sur le portrait actuel", () => {
+  const pid = teamOf(data1, "DEN").slots[0];
+  const img = imgOf("DEN", pid);
+  assert.equal(img.src, `${CDN}/${data1.photo_team_ids[pid]}/2024/1040x760/${pid}.png`);
+  img.dispatchEvent(new window.Event("error"));
+  assert.equal(img.src, `${CDN}/latest/1040x760/${pid}.png`);
+  img.dispatchEvent(new window.Event("error")); // pas de boucle
+  assert.equal(img.src, `${CDN}/latest/1040x760/${pid}.png`);
+});
+
+test("photo d'un joueur transféré en cours de saison : Siakam 2023-24 sous TOR dans la carte IND", () => {
+  cleanup();
+  cleanup = mountWith(data2);
+  const siakam = byName(data2, /Siakam/);
+  assert.ok(teamOf(data2, "IND").slots.includes(siakam));
+  assert.equal(data2.photo_team_ids[siakam], 1610612761); // Toronto Raptors
+  assert.equal(imgOf("IND", siakam).src, `${CDN}/1610612761/2023/1040x760/${siakam}.png`);
+  cleanup();
+  cleanup = mountWith(data1);
+});
+
 test("boutons sous la rangée : ✕ par tuile remplie, ⇄ par paire voisine, hors des cellules de tuile", () => {
   const row = card("DEN").querySelector(".mg-slots");
   const xs = [...row.children].filter((n) => n.classList.contains("mg-x"));
@@ -127,7 +151,9 @@ test("transfert : Jokić DEN -> LAL par clic sur le résultat, ancien slot vide,
   assert.equal(res.length, 1);
   click(res[0]);
   assert.equal($(".mg-overlay"), null);
-  assert.ok(tiles("LAL")[5].querySelector("img").src.endsWith(`/${jokic}.png`));
+  // Photo toujours celle de l'équipe de son premier match (DEN), pas de sa nouvelle carte.
+  assert.equal(tiles("LAL")[5].querySelector("img").src, `${CDN}/${data1.photo_team_ids[jokic]}/2024/1040x760/${jokic}.png`);
+  assert.equal(data1.photo_team_ids[jokic], 1610612743); // Denver Nuggets
   assert.ok(tiles("DEN")[denIdx].querySelector(".mg-tile-empty"));
   assert.equal(lastToast(), "Nikola Jokić rejoint les Los Angeles Lakers (quitte les Denver Nuggets)");
 });

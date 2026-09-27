@@ -1451,6 +1451,22 @@ def get_team_identity(season: str, force_refresh: bool = False) -> pd.DataFrame:
     return game_log[["team", "team_id", "team_name"]].drop_duplicates(subset="team").reset_index(drop=True)
 
 
+def get_first_game_teams(season: str, force_refresh: bool = False) -> pd.DataFrame:
+    """Équipe du PREMIER match de saison régulière de chaque joueur (player_id, team, team_id),
+    d'après le game log (_fetch_player_game_log, déjà en cache pour get_mercato_lineup). Pendant
+    de l'équipe de fin de saison de get_mercato_lineup (dernier match).
+
+    Utilisé par pages/2_Effectifs.py pour le portrait de la saison : le CDN NBA range ces
+    portraits sous l'équipe de début de saison, donc un joueur transféré apparaît avec le maillot
+    de sa première équipe (voulu : ça montre le transfert)."""
+    game_log = _fetch_player_game_log(season, force_refresh=force_refresh)
+    return (
+        game_log.sort_values("game_date", kind="stable")
+        .drop_duplicates(subset="player_id", keep="first")[["player_id", "team", "team_id"]]
+        .reset_index(drop=True)
+    )
+
+
 # --------------------------------------------------------------------------
 # Radar de comparaison de joueurs (voir pages/1_Radar_de_comparaison.py) — dix axes de skill
 # dérivés de colonnes déjà présentes dans get_player_stats (catalogue METRICS), normalisés par

@@ -162,6 +162,20 @@ test("stockage : repli en mémoire si localStorage indisponible ou en erreur", (
   }
 });
 
+test("photo : portrait de la saison sous l'équipe du premier match, sinon portrait actuel seul", () => {
+  const cdn = "https://cdn.nba.com/headshots/nba";
+  const latest = (id) => `${cdn}/latest/1040x760/${id}.png`;
+  // JSON reçu de Python : clés en texte. Le joueur 13 est dans la carte LAL mais son premier
+  // match était avec l'équipe 30 (transfert) : c'est elle qui compte.
+  const d = { ...data, photo_team_ids: { 5: 10, 13: 30, 99: 40 } };
+  assert.deepEqual(M.headshotSources(d, 5), { src: `${cdn}/10/2024/1040x760/5.png`, fallback: latest(5) });
+  assert.deepEqual(M.headshotSources(d, 13), { src: `${cdn}/30/2024/1040x760/13.png`, fallback: latest(13) });
+  assert.deepEqual(M.headshotSources(d, 99), { src: `${cdn}/40/2024/1040x760/99.png`, fallback: latest(99) });
+  // Joueur absent du game log, ou saison avant 2015-16 (dictionnaire vide) : portrait actuel seul
+  assert.deepEqual(M.headshotSources(d, 1), { src: latest(1), fallback: null });
+  assert.deepEqual(M.headshotSources({ ...d, season: "2004-05", photo_team_ids: {} }, 5), { src: latest(5), fallback: null });
+});
+
 test("adresse de l'effectif réel d'une équipe", () => {
   assert.equal(M.teamHref("2024-25", "BOS"), "?saison=2024-25&equipe=BOS");
   assert.equal(M.teamHref("2024-25", "A&B"), "?saison=2024-25&equipe=A%26B");
