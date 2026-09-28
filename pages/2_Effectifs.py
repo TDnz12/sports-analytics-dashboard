@@ -1,7 +1,7 @@
 """
 Effectifs — fusion des anciennes pages Rosters et Mercato. Deux vues, choisies par l'adresse :
   - grille (pas de paramètre) : la grille Mercato, composition à 6 joueurs (5 majeur + 6e homme)
-    de chaque équipe pour la saison sélectionnée, modifiable (✕, ⇄, +) ;
+    de chaque équipe pour la saison sélectionnée, modifiable (✕, ⇄, +, glisser-déposer) ;
   - effectif réel d'une équipe (?saison=2024-25&equipe=BOS) : tous les joueurs de l'équipe
     d'après get_player_stats, une carte par joueur (photo + pts/reb/pas/PIE). Jamais les
     modifications de la grille, qui n'existent que dans le navigateur.
@@ -25,16 +25,21 @@ Grille interactive en HTML + JavaScript (composant st.components.v2, SANS iframe
 directement dans la page -- disponible depuis Streamlit 1.51) : Python prépare les données de la
 saison UNE fois (prepare_season, en cache) et les envoie au composant ; tous les clics (retirer ✕,
 ajouter via une recherche par saisie de texte en cliquant sur une tuile vide, intervertir ⇄ avec
-le voisin de droite, reset par équipe, reset global) sont gérés côté navigateur, sans jamais
-repasser par Python -- seul le clic sur un nom d'équipe (ouverture de l'effectif réel, voir plus
-haut) le fait. Pourquoi : la version précédente, 100 % widgets Streamlit (~400 éléments,
+le voisin de droite, glisser-déposer d'une tuile, reset par équipe, reset global) sont gérés côté
+navigateur, sans jamais repasser par Python -- seul le clic sur un nom d'équipe (ouverture de
+l'effectif réel, voir plus haut) le fait. Pourquoi : la version précédente, 100 % widgets Streamlit (~400 éléments,
 fragments par carte, fenêtre de recherche unique), répondait en ~10 ms côté Python mais le
 navigateur mettait ~2 s à redessiner la page à chaque clic -- mesuré, voir l'historique git.
 
 Règles (implémentées dans MERCATO_GRID_JS, partie "fonctions d'état pures") : étiquettes
 M/A/AI/AF/P/6e attachées au SLOT, jamais au joueur ; vrai mercato (un joueur ajouté quitte son
-ancienne carte, toast) ; pas de ⚠️ pour un joueur ajouté ; le reset d'une équipe reprend ses
-joueurs d'origine transférés ailleurs (toast) ; marqueur "modifiée" sur toute carte différente de
+ancienne carte, toast) ; pas de ⚠️ pour un joueur ajouté ; glisser-déposer (Pointer Events, souris
+et doigt, appui long de 300 ms au doigt pour laisser la page défiler) : vers une tuile vide = le
+joueur s'y déplace, sur un autre joueur = les deux échangent leur place (toast seulement entre deux
+cartes), hors tuile = rien ; un joueur qui change de carte perd son ⚠️, comme un ajout, et le
+retrouve dès qu'il revient dans sa carte d'origine (quelle que soit sa place) ; le reset d'une
+équipe reprend ses joueurs d'origine transférés ailleurs (toast), et renvoie un joueur venu
+d'ailleurs à sa place d'origine dans son autre carte si elle est vide (toast ; sinon il sort) ; marqueur "modifiée" sur toute carte différente de
 l'origine. État sauvegardé par saison dans le localStorage du navigateur (survit au changement de
 saison ET au rechargement de la page), avec repli en mémoire si localStorage est indisponible ;
 un état sauvegardé n'est réutilisé que si la composition d'origine n'a pas changé depuis
@@ -787,6 +792,35 @@ MERCATO_GRID_CSS = r"""
   text-overflow: ellipsis;
 }
 
+/* Glisser-déposer (voir "Glisser-déposer" dans MERCATO_GRID_JS). Pas de touch-action: none : la
+   page doit pouvoir défiler au doigt en passant sur les tuiles. Pas de sélection de texte, de menu
+   iOS (enregistrer l'image...) ni de glisser natif de la photo pendant l'appui long. */
+.mg-tile:not(.mg-tile-empty) {
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.mg-tile img { -webkit-user-drag: none; }
+.mg-tile.mg-dragging { opacity: 0.35; }
+.mg-drop-target .mg-tile {
+  outline: 3px solid var(--st-primary-color, #ff4b4b);
+  outline-offset: 2px;
+}
+/* Fantôme : copie de la tuile qui suit le pointeur, ignorée par elementFromPoint. */
+.mg-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  margin: 0;
+  z-index: 1000150;
+  pointer-events: none;
+  opacity: 0.9;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.4);
+  will-change: transform;
+}
+.mg-is-dragging, .mg-is-dragging * { cursor: grabbing !important; user-select: none; -webkit-user-select: none; }
+
 /* Petits boutons (✕ retirer, ⇄ intervertir, ↺ reset, fermer). */
 .mg-btn {
   background: transparent;
@@ -921,6 +955,7 @@ MERCATO_GRID_JS = r"""
 //   1. fonctions d'état PURES (aucun accès au DOM), exportées et testées avec node ;
 //   2. rendu DOM + gestion des clics (export default, appelé par Streamlit au montage puis à
 //      chaque changement de données, c'est-à-dire à chaque changement de saison).
+// Glisser-déposer : moveOrSwap (état) et la partie "Glisser-déposer" de createGrid (gestes).
 // Aucun clic ne repasse par Python (sauf le clic sur un nom d'équipe, qui ouvre l'effectif réel
 // via setTriggerValue) : l'état vit ici, sauvegardé dans localStorage par saison.
 // Tests : tests/js/ (voir l'en-tête de chaque fichier pour la commande).
@@ -1014,16 +1049,35 @@ export function removePlayer(state, team, idx) {
   return s;
 }
 
+// Place d'un joueur dans la composition d'ORIGINE ({team, idx}), ou null s'il n'y est pas.
+export function originSlot(data, pid) {
+  for (const t of data.teams) {
+    const idx = t.slots.indexOf(pid);
+    if (idx !== -1) return { team: t.code, idx };
+  }
+  return null;
+}
+
+// `added` après l'arrivée du joueur pid dans la carte `team` : retiré s'il revient dans sa carte
+// d'origine (quelle que soit sa place : il retrouve son ⚠️ éventuel), ajouté sinon.
+function placeInAdded(s, data, pid, team) {
+  const origin = originSlot(data, pid);
+  const home = origin != null && origin.team === team;
+  const i = s.added.indexOf(pid);
+  if (home && i !== -1) s.added.splice(i, 1);
+  else if (!home && i === -1) s.added.push(pid);
+}
+
 // Vrai mercato : un joueur déjà présent dans une AUTRE carte la quitte (son slot devient vide).
 // Renvoie { state, kind: "same" | "free" | "transfer", from }. "same" = déjà dans cette carte :
 // état inchangé.
-export function addPlayer(state, team, idx, pid) {
+export function addPlayer(state, data, team, idx, pid) {
   const current = findPlayer(state, pid);
   if (current && current.team === team) return { state, kind: "same", from: team };
   const s = cloneState(state);
   if (current) s.slots[current.team][current.idx] = null;
   s.slots[team][idx] = pid;
-  if (!s.added.includes(pid)) s.added.push(pid);
+  placeInAdded(s, data, pid, team);
   return { state: s, kind: current ? "transfer" : "free", from: current ? current.team : null };
 }
 
@@ -1037,9 +1091,47 @@ export function swapRight(state, team, idx) {
   return s;
 }
 
+// Glisser-déposer du joueur du slot `from` sur le slot `to` ({team, idx}). Renvoie
+// { state, kind, pid, other } :
+//   - "none"     : slot de départ vide ou lâché sur sa propre place -> état inchangé (même objet) ;
+//   - "move"     : vers une tuile vide de la même carte (l'ancienne place devient vide) ;
+//   - "swap"     : sur un autre joueur de la même carte (les deux échangent leur place) ;
+//   - "transfer" : vers une tuile vide d'une autre carte ;
+//   - "trade"    : sur un joueur d'une autre carte (chacun prend la place de l'autre).
+// Étiquettes fixes au slot. Un joueur qui change de carte entre dans `added` (plus de ⚠️), comme
+// un transfert par la recherche, sauf s'il revient dans sa carte d'origine (retiré de `added`, voir
+// placeInAdded) ; dans une même carte, `added` ne change pas (comme avec ⇄).
+export function moveOrSwap(state, data, from, to) {
+  const pid = state.slots[from.team][from.idx];
+  const other = state.slots[to.team][to.idx];
+  if (pid == null || (from.team === to.team && from.idx === to.idx)) {
+    return { state, kind: "none", pid, other: null };
+  }
+  const s = cloneState(state);
+  s.slots[to.team][to.idx] = pid;
+  s.slots[from.team][from.idx] = other;
+  const sameCard = from.team === to.team;
+  if (!sameCard) {
+    placeInAdded(s, data, pid, to.team);
+    if (other != null) placeInAdded(s, data, other, from.team);
+  }
+  const kind = sameCard ? (other == null ? "move" : "swap") : (other == null ? "transfer" : "trade");
+  return { state: s, kind, pid, other };
+}
+
+// Vitesse du défilement automatique pendant un glisser (pixels par image) : 0 hors des bandes de
+// `edge` px en haut et en bas de l'écran, puis croissante jusqu'à `max` au bord (négative en haut).
+export function autoScrollStep(y, viewportHeight, edge = 60, max = 18) {
+  if (y < edge) return -Math.ceil(max * Math.min(1, (edge - y) / edge));
+  if (y > viewportHeight - edge) return Math.ceil(max * Math.min(1, (y - (viewportHeight - edge)) / edge));
+  return 0;
+}
+
 // Remet l'équipe dans sa composition d'origine. Un joueur d'origine transféré entre-temps dans
 // une autre carte en est REPRIS (son slot là-bas devient vide) : renvoyé dans `returned` pour
-// le toast. Les joueurs d'origine retrouvent leur ⚠️ éventuel (retirés de `added`).
+// le toast. Les joueurs d'origine retrouvent leur ⚠️ éventuel (retirés de `added`). Un joueur
+// venu d'ailleurs qui sort de la carte retourne à sa place d'origine dans une AUTRE carte si elle
+// est vide (`restored`, toast, ⚠️ rétabli) ; sinon il sort de la grille.
 export function resetTeam(state, data, team) {
   const orig = data.teams.find((t) => t.code === team).slots.map((s) => (s == null ? null : s));
   const s = cloneState(state);
@@ -1052,9 +1144,19 @@ export function resetTeam(state, data, team) {
       returned.push({ pid, from: current.team });
     }
   }
+  const evicted = s.slots[team].filter((pid) => pid != null && !orig.includes(pid));
   s.slots[team] = orig;
   s.added = s.added.filter((pid) => !orig.includes(pid));
-  return { state: s, returned };
+  const restored = [];
+  for (const pid of evicted) {
+    const home = originSlot(data, pid);
+    if (home && home.team !== team && s.slots[home.team][home.idx] == null) {
+      s.slots[home.team][home.idx] = pid;
+      placeInAdded(s, data, pid, home.team);
+      restored.push({ pid, to: home.team });
+    }
+  }
+  return { state: s, returned, restored };
 }
 
 export function isTeamModified(state, data, team) {
@@ -1097,6 +1199,14 @@ export function addMessage(kind, playerName, targetName, fromName) {
 
 export function returnMessage(playerName, teamName, fromName) {
   return `${playerName} revient aux ${teamName} (quitte les ${fromName})`;
+}
+
+export function restoreMessage(playerName, teamName) {
+  return `${playerName} retourne chez les ${teamName}`;
+}
+
+export function tradeMessage(nameA, nameB, codeA, codeB) {
+  return `Échange : ${lastName(nameA)} ↔ ${lastName(nameB)} (${codeA} ↔ ${codeB})`;
 }
 
 // Stockage : localStorage si disponible, sinon repli en mémoire (tient jusqu'au rechargement).
@@ -1218,6 +1328,7 @@ function createGrid(host) {
     missingIds = new Set(data.missing);
     index = buildSearchIndex(data.players);
     state = loadState(storage, data);
+    endDrag();
     closeSearch();
     cancelConfirm();
     renderAll();
@@ -1311,6 +1422,7 @@ function createGrid(host) {
   function buildSlot(team, pid, j, displayName) {
     const cell = el("div", "mg-slot");
     cell.dataset.slot = String(j);
+    cell.dataset.team = team.code; // cible du glisser-déposer (voir slotAt)
     if (pid == null) {
       const tile = actionButton("", "mg-tile mg-tile-empty", "add", { team: team.code, slot: j, title: "Ajouter un joueur" });
       tile.append(el("span", "mg-badge", SLOT_LABELS[j]), el("span", "mg-plus", "+"));
@@ -1327,6 +1439,7 @@ function createGrid(host) {
       img.alt = full;
       img.loading = "lazy";
       img.decoding = "async";
+      img.draggable = false; // pas de glisser natif de l'image (il doublerait le nôtre)
       tile.append(img, el("span", "mg-badge", SLOT_LABELS[j]));
       if (showWarning(state, missingIds, pid)) {
         const warn = el("span", "mg-warning", "⚠️");
@@ -1429,7 +1542,7 @@ function createGrid(host) {
     if (!search) return;
     const { team, slot } = search;
     closeSearch(); // fermeture automatique dès qu'un joueur est choisi
-    const r = addPlayer(state, team, slot, pid);
+    const r = addPlayer(state, data, team, slot, pid);
     if (r.kind === "same") {
       toast(addMessage("same", playerName(pid), teamName(team)));
       return;
@@ -1441,12 +1554,10 @@ function createGrid(host) {
   // --- Resets ---
   function doResetTeam(team) {
     const r = resetTeam(state, data, team);
-    commit(r.state, [team, ...r.returned.map((x) => x.from)]);
-    if (r.returned.length) {
-      for (const x of r.returned) toast(returnMessage(playerName(x.pid), teamName(team), teamName(x.from)));
-    } else {
-      toast(`${teamName(team)} : composition d'origine rétablie`);
-    }
+    commit(r.state, [team, ...r.returned.map((x) => x.from), ...r.restored.map((x) => x.to)]);
+    for (const x of r.returned) toast(returnMessage(playerName(x.pid), teamName(team), teamName(x.from)));
+    for (const x of r.restored) toast(restoreMessage(playerName(x.pid), teamName(x.to)));
+    if (!r.returned.length && !r.restored.length) toast(`${teamName(team)} : composition d'origine rétablie`);
   }
 
   function cancelConfirm() {
@@ -1490,6 +1601,197 @@ function createGrid(host) {
   }
   root.addEventListener("click", onClick);
 
+  // --- Glisser-déposer d'une tuile remplie (Pointer Events : souris ET doigt) ---
+  // Souris : démarre après DRAG_THRESHOLD px de mouvement (en dessous, c'est un clic). Doigt ou
+  // stylet : démarre après un appui long de LONG_PRESS_MS sans bouger ; un mouvement avant (au-delà
+  // de LONG_PRESS_SLOP) abandonne, pour laisser la page défiler. Pas de touch-action: none sur les
+  // tuiles (elles couvrent presque tout l'écran d'un téléphone) : le défilement n'est bloqué
+  // qu'une fois le glisser lancé, par preventDefault sur touchmove (écouteur non passif).
+  const DRAG_THRESHOLD = 5;
+  const LONG_PRESS_MS = 300;
+  const LONG_PRESS_SLOP = 8;
+  let drag = null;
+  let suppressClick = false;
+
+  function onPointerDown(ev) {
+    if (drag || search || ev.button !== 0 || ev.isPrimary === false) return;
+    const tile = ev.target.closest ? ev.target.closest(".mg-tile") : null;
+    if (!tile || tile.classList.contains("mg-tile-empty") || tile.classList.contains("mg-ghost")) return;
+    const cell = tile.closest(".mg-slot");
+    if (!cell || !root.contains(cell)) return;
+    drag = {
+      pointerId: ev.pointerId,
+      touch: ev.pointerType !== "mouse",
+      from: { team: cell.dataset.team, idx: Number(cell.dataset.slot) },
+      tile, startX: ev.clientX, startY: ev.clientY, x: ev.clientX, y: ev.clientY,
+      active: false, timer: null, ghost: null, targetCell: null, to: null, scroller: null, raf: 0,
+    };
+    if (drag.touch) drag.timer = setTimeout(startDrag, LONG_PRESS_MS);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", endDrag);
+    window.addEventListener("keydown", onDragKey);
+  }
+
+  function onPointerMove(ev) {
+    if (!drag || ev.pointerId !== drag.pointerId) return;
+    drag.x = ev.clientX;
+    drag.y = ev.clientY;
+    if (!drag.active) {
+      const dist = Math.hypot(drag.x - drag.startX, drag.y - drag.startY);
+      if (drag.touch && dist > LONG_PRESS_SLOP) endDrag(); // le doigt fait défiler la page
+      else if (!drag.touch && dist > DRAG_THRESHOLD) startDrag();
+      return;
+    }
+    ev.preventDefault();
+    moveGhost();
+    updateTarget();
+  }
+
+  function startDrag() {
+    if (!drag || drag.active) return;
+    clearTimeout(drag.timer);
+    drag.active = true;
+    const rect = drag.tile.getBoundingClientRect();
+    drag.offsetX = drag.startX - rect.left;
+    drag.offsetY = drag.startY - rect.top;
+    const ghost = drag.tile.cloneNode(true);
+    ghost.classList.add("mg-ghost");
+    ghost.removeAttribute("title");
+    ghost.style.width = `${rect.width}px`;
+    ghost.style.height = `${rect.height}px`;
+    root.append(ghost);
+    drag.ghost = ghost;
+    drag.tile.classList.add("mg-dragging");
+    root.classList.add("mg-is-dragging");
+    drag.scroller = scrollContainer();
+    const nav = window.navigator;
+    if (drag.touch && nav && typeof nav.vibrate === "function") {
+      try { nav.vibrate(15); } catch (e) { /* vibration refusée : sans importance */ }
+    }
+    moveGhost();
+    updateTarget();
+    if (typeof window.requestAnimationFrame === "function") drag.raf = window.requestAnimationFrame(autoScroll);
+  }
+
+  function moveGhost() {
+    drag.ghost.style.transform = `translate(${drag.x - drag.offsetX}px, ${drag.y - drag.offsetY}px)`;
+  }
+
+  // Cellule de slot sous le pointeur (le fantôme, en pointer-events: none, est ignoré). Composant
+  // monté dans un shadow DOM : elementFromPoint du shadow root, celui du document renverrait l'hôte.
+  function slotAt(x, y) {
+    const rootNode = root.getRootNode();
+    const finder = rootNode && typeof rootNode.elementFromPoint === "function" ? rootNode : document;
+    if (typeof finder.elementFromPoint !== "function") return null;
+    const hit = finder.elementFromPoint(x, y);
+    const cell = hit && hit.closest ? hit.closest(".mg-slot") : null;
+    return cell && root.contains(cell) ? cell : null;
+  }
+
+  // Surligne la tuile de destination, seulement si le lâcher y changerait quelque chose.
+  function updateTarget() {
+    const cell = slotAt(drag.x, drag.y);
+    const to = cell ? { team: cell.dataset.team, idx: Number(cell.dataset.slot) } : null;
+    const own = to && to.team === drag.from.team && to.idx === drag.from.idx;
+    const next = to && !own ? cell : null;
+    if (next === drag.targetCell) return;
+    if (drag.targetCell) drag.targetCell.classList.remove("mg-drop-target");
+    drag.targetCell = next;
+    drag.to = next ? to : null;
+    if (next) next.classList.add("mg-drop-target");
+  }
+
+  // Premier ancêtre qui défile vraiment (en sortant du shadow DOM par son hôte), sinon la page.
+  function scrollContainer() {
+    let node = root.parentNode;
+    while (node) {
+      if (node.nodeType === 11) { node = node.host; continue; } // shadow root -> hôte
+      if (node.nodeType === 1) {
+        const oy = window.getComputedStyle(node).overflowY;
+        if ((oy === "auto" || oy === "scroll") && node.scrollHeight > node.clientHeight) return node;
+      }
+      node = node.parentNode;
+    }
+    return document.scrollingElement || document.documentElement;
+  }
+
+  // Défilement automatique près du bord haut ou bas de l'écran ; la tuile visée change alors sous
+  // un pointeur immobile, d'où le nouveau calcul de la cible.
+  function autoScroll() {
+    if (!drag || !drag.active) return;
+    const step = autoScrollStep(drag.y, window.innerHeight);
+    if (step && drag.scroller) {
+      drag.scroller.scrollTop += step;
+      updateTarget();
+    }
+    drag.raf = window.requestAnimationFrame(autoScroll);
+  }
+
+  function onPointerUp(ev) {
+    if (!drag || ev.pointerId !== drag.pointerId) return;
+    if (!drag.active) { endDrag(); return; } // simple clic : laissé à onClick
+    drag.x = ev.clientX;
+    drag.y = ev.clientY;
+    updateTarget();
+    const { from, to } = drag;
+    endDrag();
+    // Le navigateur peut envoyer un click juste après le lâcher : ignoré (voir onClickCapture).
+    suppressClick = true;
+    setTimeout(() => { suppressClick = false; }, 0);
+    if (to) drop(from, to);
+  }
+
+  function drop(from, to) {
+    const r = moveOrSwap(state, data, from, to);
+    if (r.kind === "none") return;
+    commit(r.state, [from.team, to.team]);
+    // Pas de toast dans une même carte (comme ⇄).
+    if (r.kind === "transfer") toast(addMessage("transfer", playerName(r.pid), teamName(to.team), teamName(from.team)));
+    else if (r.kind === "trade") toast(tradeMessage(playerName(r.pid), playerName(r.other), from.team, to.team));
+  }
+
+  // Fin du geste, avec ou sans lâcher : aussi pointercancel, Échap, changement de saison, démontage.
+  function endDrag() {
+    if (!drag) return;
+    clearTimeout(drag.timer);
+    if (drag.raf && typeof window.cancelAnimationFrame === "function") window.cancelAnimationFrame(drag.raf);
+    if (drag.ghost) drag.ghost.remove();
+    drag.tile.classList.remove("mg-dragging");
+    if (drag.targetCell) drag.targetCell.classList.remove("mg-drop-target");
+    root.classList.remove("mg-is-dragging");
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", onPointerUp);
+    window.removeEventListener("pointercancel", endDrag);
+    window.removeEventListener("keydown", onDragKey);
+    drag = null;
+  }
+
+  function onDragKey(ev) {
+    if (drag && drag.active && ev.key === "Escape") endDrag();
+  }
+
+  function onTouchMove(ev) {
+    if (drag && drag.active && ev.cancelable) ev.preventDefault();
+  }
+
+  // Appui long sur Android : menu contextuel (enregistrer l'image...) bloqué pendant le geste.
+  function onContextMenu(ev) {
+    if (drag) ev.preventDefault();
+  }
+
+  function onClickCapture(ev) {
+    if (!suppressClick) return;
+    suppressClick = false;
+    ev.preventDefault();
+    ev.stopPropagation();
+  }
+
+  root.addEventListener("pointerdown", onPointerDown);
+  root.addEventListener("touchmove", onTouchMove, { passive: false });
+  root.addEventListener("contextmenu", onContextMenu);
+  root.addEventListener("click", onClickCapture, true);
+
   // Clic simple sur un nom d'équipe : pas de rechargement complet de la page (qui ferait perdre
   // la session Streamlit), Python bascule sur la vue effectif réel via st.query_params. Clic avec
   // Cmd/Ctrl/Maj/Alt (nouvel onglet/fenêtre) : comportement normal du lien, rien d'intercepté.
@@ -1506,8 +1808,13 @@ function createGrid(host) {
     setTrigger(fn) { trigger = typeof fn === "function" ? fn : null; },
     destroy() {
       clearTimeout(confirmTimer);
+      endDrag();
       closeSearch();
       root.removeEventListener("click", onClick);
+      root.removeEventListener("pointerdown", onPointerDown);
+      root.removeEventListener("touchmove", onTouchMove, { passive: false });
+      root.removeEventListener("contextmenu", onContextMenu);
+      root.removeEventListener("click", onClickCapture, true);
       root.remove();
     },
   };
@@ -1539,7 +1846,7 @@ mercato_grid = st.components.v2.component("mercato_grid", css=MERCATO_GRID_CSS, 
 st.title("👥 Effectifs")
 st.caption(
     "Clique sur le nom d'une équipe pour voir son effectif complet, ou refais les compositions "
-    "avec ✕, ⇄ et +."
+    "avec ✕, ⇄ et +, ou en faisant glisser un joueur (appui long sur écran tactile)."
 )
 st.caption(f"Composition à 6 joueurs par équipe — saison régulière {season}.")
 

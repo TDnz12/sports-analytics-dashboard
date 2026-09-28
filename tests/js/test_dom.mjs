@@ -344,6 +344,336 @@ test("aller-retour vers un effectif (grille démontée puis remontée) : modific
   assert.ok(card("MIL").querySelector(".mg-modified"));
 });
 
+// ---------------------------------------------------------------------------------------------
+// Glisser-déposer. jsdom 24 n'a ni PointerEvent, ni elementFromPoint (pas de mise en page), ni
+// requestAnimationFrame : événements pointer = MouseEvent + pointerId/pointerType ; chaque tuile
+// visée reçoit une abscisse propre, que elementFromPoint (simulé sur le shadow root) résout ;
+// images d'animation exécutées à la main.
+// ---------------------------------------------------------------------------------------------
+const points = new Map();
+let nextX = 100;
+shadow.elementFromPoint = (x) => points.get(x) || null;
+const at = (node) => { const x = (nextX += 10); points.set(x, node); return { x, y: 300 }; };
+const OUTSIDE = { x: 1, y: 300 }; // rien sous le pointeur
+let rafQueue = [];
+window.requestAnimationFrame = (cb) => { rafQueue.push(cb); return rafQueue.length; };
+window.cancelAnimationFrame = () => { rafQueue = []; };
+const runFrame = () => { const q = rafQueue; rafQueue = []; q.forEach((cb) => cb()); };
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const testAsync = async (name, fn) => { await fn(); passed++; console.log("ok -", name); };
+
+const pointer = (type, target, { x, y }, init = {}) => {
+  const ev = new window.MouseEvent(type, { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, button: 0 });
+  Object.defineProperty(ev, "pointerId", { value: init.pointerId ?? 1 });
+  Object.defineProperty(ev, "pointerType", { value: init.pointerType ?? "mouse" });
+  target.dispatchEvent(ev);
+  return ev;
+};
+const tileAt = (code, j) => tiles(code)[j].querySelector(".mg-tile");
+const pidAt = (code, j) => { const i = tiles(code)[j].querySelector("img"); return i ? Number(i.src.match(/(\d+)\.png$/)[1]) : null; };
+const pidsOf = (code) => tiles(code).map((_, j) => pidAt(code, j));
+// Après un glisser à la souris, le navigateur envoie un click sur l'ancêtre commun des éléments
+// de départ et d'arrivée (ici la grille) : la grille doit l'ignorer.
+const browserClick = () => click($(".mg-grid"));
+// Glisser à la souris de la tuile (code, j) vers `dest` (nœud visé, ou null = hors tuile).
+const mouseDrag = (code, j, dest, { withClick = true } = {}) => {
+  const src = tileAt(code, j);
+  const start = at(src.querySelector("img") || src);
+  pointer("pointerdown", src, start);
+  pointer("pointermove", src, { x: start.x, y: start.y + 20 }); // au-delà du seuil : démarre
+  const end = dest ? at(dest) : OUTSIDE;
+  pointer("pointermove", src, end);
+  pointer("pointerup", src, end);
+  if (withClick) browserClick();
+};
+const saved = () => JSON.parse(window.localStorage.getItem("mercato_v1_2024-25"));
+const resetAll = () => { click($(".mg-reset-all")); click($(".mg-reset-all")); };
+
+test("glisser à la souris vers une tuile vide de la même carte : déplacement, étiquettes fixes, pas de toast", () => {
+  resetAll();
+  const toastsBefore = $$(".mg-toast").length;
+  const den = pidsOf("DEN");
+  click(btn("DEN", "remove", 0));
+  mouseDrag("DEN", 4, tiles("DEN")[0].querySelector(".mg-plus")); // Jokić (P) -> M vide
+  assert.deepEqual(pidsOf("DEN"), [den[4], den[1], den[2], den[3], null, den[5]]);
+  assert.deepEqual(tiles("DEN").map((s) => s.querySelector(".mg-badge").textContent), ["M", "A", "AI", "AF", "P", "6e"]);
+  assert.equal(tileAt("DEN", 0).title, "Nikola Jokić");
+  assert.ok(card("DEN").querySelector(".mg-modified"));
+  assert.deepEqual(saved().slots.DEN, [den[4], den[1], den[2], den[3], null, den[5]]);
+  assert.equal($$(".mg-toast").length, toastsBefore);
+  // plus de fantôme ni de surlignage après le lâcher
+  assert.equal($$(".mg-ghost, .mg-dragging, .mg-drop-target, .mg-is-dragging").length, 0);
+});
+
+test("glisser sur un autre joueur de la même carte : échange, pas de toast", () => {
+  resetAll();
+  const toastsBefore = $$(".mg-toast").length;
+  const bos = pidsOf("BOS");
+  mouseDrag("BOS", 0, tileAt("BOS", 5).querySelector("img"));
+  assert.deepEqual(pidsOf("BOS"), [bos[5], bos[1], bos[2], bos[3], bos[4], bos[0]]);
+  assert.equal($$(".mg-toast").length, toastsBefore);
+  assert.equal($$(".mg-modified").length, 1);
+});
+
+test("glisser sur un joueur d'une autre carte : échange DEN ↔ LAL, toast, photos suivent", () => {
+  resetAll();
+  const den = pidsOf("DEN");
+  const lal = pidsOf("LAL");
+  const denPhoto = tileAt("DEN", 4).querySelector("img").src;
+  mouseDrag("DEN", 4, tileAt("LAL", 2).querySelector(".mg-name")); // Jokić <-> James
+  assert.equal(pidAt("DEN", 4), lal[2]);
+  assert.equal(pidAt("LAL", 2), den[4]);
+  assert.equal(tileAt("LAL", 2).querySelector("img").src, denPhoto);
+  assert.equal(lastToast(), "Échange : Jokić ↔ James (DEN ↔ LAL)");
+  assert.ok(card("DEN").querySelector(".mg-modified"));
+  assert.ok(card("LAL").querySelector(".mg-modified"));
+  assert.equal(saved().slots.LAL[2], den[4]);
+  assert.deepEqual(saved().added.slice().sort((a, b) => a - b), [den[4], lal[2]].sort((a, b) => a - b));
+});
+
+test("glisser vers une tuile vide d'une autre carte : transfert, toast", () => {
+  resetAll();
+  const bos0 = pidAt("BOS", 0);
+  click(btn("MIA", "remove", 3));
+  mouseDrag("BOS", 0, tiles("MIA")[3]);
+  assert.equal(pidAt("MIA", 3), bos0);
+  assert.ok(tiles("BOS")[0].querySelector(".mg-tile-empty"));
+  assert.equal(lastToast(), `${tileAt("MIA", 3).title} rejoint les ${teamOf(data1, "MIA").name} (quitte les ${teamOf(data1, "BOS").name})`);
+});
+
+test("lâché hors tuile, sur un bouton ✕ ou sur sa propre place : rien ne change, rien n'est sauvegardé", () => {
+  resetAll();
+  const before = $(".mg-grid").innerHTML;
+  window.localStorage.removeItem("mercato_v1_2024-25");
+  mouseDrag("DEN", 1, null);
+  mouseDrag("DEN", 1, btn("LAL", "remove", 0));
+  mouseDrag("DEN", 1, tileAt("DEN", 1).querySelector(".mg-badge"));
+  assert.equal($(".mg-grid").innerHTML, before);
+  assert.equal(window.localStorage.getItem("mercato_v1_2024-25"), null);
+  assert.equal($$(".mg-ghost").length, 0);
+});
+
+test("pendant le glisser : fantôme, tuile de départ grisée, destination surlignée (pas sa propre place)", () => {
+  resetAll();
+  const src = tileAt("DEN", 0);
+  const start = at(src);
+  pointer("pointerdown", src, start);
+  pointer("pointermove", src, { x: start.x, y: start.y + 3 }); // sous le seuil : pas encore
+  assert.equal($(".mg-ghost"), null);
+  pointer("pointermove", src, { x: start.x, y: start.y + 20 });
+  assert.ok($(".mg-ghost"));
+  assert.equal($(".mg-ghost").style.transform, "translate(0px, 20px)");
+  assert.ok(src.classList.contains("mg-dragging"));
+  assert.equal($$(".mg-drop-target").length, 0); // au-dessus de sa propre place
+  pointer("pointermove", src, at(tileAt("LAL", 1)));
+  assert.deepEqual($$(".mg-drop-target"), [tiles("LAL")[1]]);
+  pointer("pointermove", src, OUTSIDE);
+  assert.equal($$(".mg-drop-target").length, 0);
+  // Échap : annulé, rien ne change
+  window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape" }));
+  assert.equal($$(".mg-ghost, .mg-dragging, .mg-is-dragging").length, 0);
+  pointer("pointerup", src, at(tileAt("LAL", 1)));
+  assert.equal($$(".mg-modified").length, 0);
+});
+
+await testAsync("clic simple : un petit mouvement reste un clic (tuile vide = recherche), click après un lâcher ignoré", async () => {
+  resetAll();
+  click(btn("DEN", "remove", 0));
+  const empty = tileAt("DEN", 0);
+  const p = at(empty);
+  pointer("pointerdown", empty, p); // tuile vide : jamais de glisser
+  pointer("pointermove", empty, { x: p.x, y: p.y + 30 });
+  assert.equal($(".mg-ghost"), null);
+  pointer("pointerup", empty, p);
+  click(empty);
+  assert.ok($(".mg-overlay"));
+  key("Escape");
+  // tuile remplie : petit mouvement (< 5 px) puis relâché -> pas de glisser, clic normal
+  const src = tileAt("DEN", 1);
+  const s = at(src);
+  pointer("pointerdown", src, s);
+  pointer("pointermove", src, { x: s.x + 2, y: s.y + 2 });
+  pointer("pointerup", src, s);
+  assert.equal($(".mg-ghost"), null);
+  assert.equal(pidAt("DEN", 1), teamOf(data1, "DEN").slots[1]);
+  // le click envoyé par le navigateur juste après un lâcher est ignoré, pas les suivants
+  mouseDrag("DEN", 2, null, { withClick: false });
+  click(tileAt("DEN", 0)); // pire cas : ce click tombe sur une tuile vide
+  assert.equal($(".mg-overlay"), null);
+  await sleep(5);
+  click(tileAt("DEN", 0));
+  assert.ok($(".mg-overlay"));
+  key("Escape");
+});
+
+await testAsync("doigt : appui long de 300 ms puis glisser, défilement bloqué seulement pendant le glisser, vibration", async () => {
+  resetAll();
+  const vibrations = [];
+  window.navigator.vibrate = (ms) => { vibrations.push(ms); return true; };
+  const den = pidsOf("DEN");
+  const lal = pidsOf("LAL");
+  const src = tileAt("DEN", 0);
+  const start = at(src);
+  const touch = { pointerType: "touch", pointerId: 7 };
+  pointer("pointerdown", src, start, touch);
+  const early = new window.Event("touchmove", { bubbles: true, cancelable: true, composed: true });
+  src.dispatchEvent(early);
+  assert.equal(early.defaultPrevented, false); // avant l'appui long : la page peut défiler
+  await sleep(150);
+  assert.equal($(".mg-ghost"), null);
+  await sleep(200);
+  assert.ok($(".mg-ghost"));
+  assert.deepEqual(vibrations, [15]);
+  const during = new window.Event("touchmove", { bubbles: true, cancelable: true, composed: true });
+  src.dispatchEvent(during);
+  assert.equal(during.defaultPrevented, true);
+  const menu = new window.MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+  src.dispatchEvent(menu);
+  assert.equal(menu.defaultPrevented, true);
+  // un autre pointeur (deuxième doigt) est ignoré
+  pointer("pointermove", src, at(tileAt("LAL", 5)), { pointerType: "touch", pointerId: 8 });
+  assert.equal($$(".mg-drop-target").length, 0);
+  const end = at(tileAt("LAL", 0));
+  pointer("pointermove", src, end, touch);
+  pointer("pointerup", src, end, touch);
+  assert.equal(pidAt("LAL", 0), den[0]);
+  assert.equal(pidAt("DEN", 0), lal[0]);
+  const after = new window.Event("touchmove", { bubbles: true, cancelable: true, composed: true });
+  tileAt("DEN", 1).dispatchEvent(after);
+  assert.equal(after.defaultPrevented, false);
+  delete window.navigator.vibrate;
+  await sleep(5); // pas de click après un glisser au doigt : le blocage du click expire seul
+});
+
+await testAsync("doigt : bouger avant 300 ms = défilement (pas de glisser) ; pointercancel annule sans rien changer", async () => {
+  resetAll();
+  const touch = { pointerType: "touch", pointerId: 9 };
+  const src = tileAt("DEN", 0);
+  const start = at(src);
+  pointer("pointerdown", src, start, touch);
+  pointer("pointermove", src, { x: start.x, y: start.y + 15 }, touch);
+  await sleep(350);
+  assert.equal($(".mg-ghost"), null);
+  pointer("pointerup", src, start, touch);
+  // appui long, glisser au-dessus d'une autre carte, puis le navigateur annule le geste
+  pointer("pointerdown", src, start, touch);
+  await sleep(350);
+  pointer("pointermove", src, at(tileAt("LAL", 0)), touch);
+  assert.equal($$(".mg-drop-target").length, 1);
+  pointer("pointercancel", src, OUTSIDE, touch);
+  assert.equal($$(".mg-ghost, .mg-drop-target, .mg-dragging").length, 0);
+  assert.equal($$(".mg-modified").length, 0);
+});
+
+test("défilement automatique près du bord bas puis haut, dans le conteneur qui défile", () => {
+  resetAll();
+  const host = document.getElementById("host");
+  host.style.overflowY = "auto";
+  Object.defineProperty(host, "scrollHeight", { value: 5000, configurable: true });
+  Object.defineProperty(host, "clientHeight", { value: 700, configurable: true });
+  host.scrollTop = 1000;
+  const src = tileAt("DEN", 0);
+  const start = at(src);
+  pointer("pointerdown", src, start);
+  pointer("pointermove", src, { x: start.x, y: start.y + 20 });
+  runFrame();
+  assert.equal(host.scrollTop, 1000); // milieu de l'écran : immobile
+  pointer("pointermove", src, { x: OUTSIDE.x, y: window.innerHeight - 5 });
+  runFrame();
+  runFrame();
+  assert.ok(host.scrollTop > 1000);
+  const low = host.scrollTop;
+  pointer("pointermove", src, { x: OUTSIDE.x, y: 5 });
+  runFrame();
+  assert.ok(host.scrollTop < low);
+  pointer("pointerup", src, OUTSIDE);
+  browserClick();
+  const stopped = host.scrollTop;
+  runFrame();
+  assert.equal(host.scrollTop, stopped);
+  assert.equal(rafQueue.length, 0);
+  host.style.overflowY = "";
+  delete host.scrollHeight;
+  delete host.clientHeight;
+});
+
+test("⚠️ : suit le joueur dans sa carte, disparaît quand il change de carte (échange)", () => {
+  const warn = structuredClone(data1);
+  warn.season = "test-warning";
+  const den = teamOf(warn, "DEN").slots;
+  warn.missing = [den[3]];
+  mountWith(warn);
+  const hasWarn = (code, j) => !!tiles(code)[j].querySelector(".mg-warning");
+  assert.equal(hasWarn("DEN", 3), true);
+  mouseDrag("DEN", 3, tileAt("DEN", 0).querySelector("img"));
+  assert.equal(hasWarn("DEN", 0), true);
+  assert.equal(hasWarn("DEN", 3), false);
+  mouseDrag("DEN", 0, tileAt("LAL", 0).querySelector("img"));
+  assert.equal(pidAt("LAL", 0), den[3]);
+  assert.equal(hasWarn("LAL", 0), false);
+  // retour dans sa carte d'origine, sur une autre place que la sienne : ⚠️ rétabli
+  mouseDrag("LAL", 0, tileAt("DEN", 5).querySelector("img"));
+  assert.equal(pidAt("DEN", 5), den[3]);
+  assert.equal(hasWarn("DEN", 5), true);
+  // idem par la recherche : reparti aux Lakers, puis rajouté à DEN sur une place vide
+  mouseDrag("DEN", 5, tileAt("LAL", 1).querySelector("img"));
+  assert.equal(hasWarn("LAL", 1), false);
+  click(btn("DEN", "remove", 2));
+  click(tileAt("DEN", 2));
+  type(tileAt("LAL", 1).title);
+  key("Enter");
+  assert.equal(pidAt("DEN", 2), den[3]);
+  assert.equal(hasWarn("DEN", 2), true);
+  mountWith(data1);
+});
+
+test("reset d'équipe après un échange DEN ↔ LAL : James retourne à sa place chez les Lakers, toasts", () => {
+  resetAll();
+  const den = pidsOf("DEN");
+  const lal = pidsOf("LAL");
+  mouseDrag("DEN", 4, tileAt("LAL", 2).querySelector("img")); // Jokić <-> James
+  const nToasts = $$(".mg-toast").length;
+  click(card("DEN").querySelector('[data-action="reset-team"]'));
+  assert.deepEqual(pidsOf("DEN"), den);
+  assert.deepEqual(pidsOf("LAL"), lal);
+  assert.deepEqual($$(".mg-toast").slice(nToasts).map((t) => t.textContent), [
+    "Nikola Jokić revient aux Denver Nuggets (quitte les Los Angeles Lakers)",
+    "LeBron James retourne chez les Los Angeles Lakers",
+  ]);
+  assert.equal($$(".mg-modified").length, 0);
+  assert.deepEqual(saved().slots.LAL, lal);
+  assert.deepEqual(saved().added, []);
+  // place d'origine déjà prise : le joueur sort de la grille, pas de toast de retour
+  mouseDrag("DEN", 4, tileAt("LAL", 2).querySelector("img"));
+  click(btn("LAL", "remove", 5));
+  mouseDrag("LAL", 0, tileAt("LAL", 5)); // Reaves va au 6e : LAL[0] vide
+  mouseDrag("LAL", 2, tileAt("LAL", 0)); // Jokić prend la place M : la place AI de James est libre
+  mouseDrag("LAL", 1, tileAt("LAL", 2)); // Dončić prend la place AI de James
+  const n2 = $$(".mg-toast").length;
+  click(card("DEN").querySelector('[data-action="reset-team"]'));
+  assert.deepEqual(pidsOf("DEN"), den);
+  assert.deepEqual($$(".mg-toast").slice(n2).map((t) => t.textContent),
+    ["Nikola Jokić revient aux Denver Nuggets (quitte les Los Angeles Lakers)"]);
+  assert.ok(!pidsOf("LAL").includes(lal[2]));
+  resetAll();
+});
+
+test("changement de saison pendant un glisser : annulé, plus de fantôme", () => {
+  resetAll();
+  const src = tileAt("DEN", 0);
+  const start = at(src);
+  pointer("pointerdown", src, start);
+  pointer("pointermove", src, { x: start.x, y: start.y + 20 });
+  assert.ok($(".mg-ghost"));
+  mountWith(data2);
+  assert.equal($$(".mg-ghost, .mg-is-dragging").length, 0);
+  const before = $(".mg-grid").innerHTML;
+  pointer("pointerup", src, at(tileAt("MIA", 0))); // plus d'effet
+  assert.equal($(".mg-grid").innerHTML, before);
+  mountWith(data1);
+  assert.equal($$(".mg-modified").length, 0);
+});
+
 // Coût d'un clic côté JS (jsdom, ordre de grandeur seulement : pas de mise en page réelle).
 const t0 = performance.now();
 for (let i = 0; i < 20; i++) { click(btn("ATL", "swap", 0)); }
