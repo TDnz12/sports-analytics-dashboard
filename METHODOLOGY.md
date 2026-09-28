@@ -75,6 +75,33 @@ joueur : une équipe qui aligne 3 extérieurs aura 3 joueurs étiquetés M/A/AI.
 plutôt qu'un système de quotas qui écarterait un joueur pour forcer un équilibre 2/2/1. Le 5
 majeur est donc celui des 5 joueurs les plus utilisés, pas forcément le 5 de départ officiel.
 
+## Radar de comparaison
+
+Chaque axe est un z-score par poste (Intérieur / Ailier / Extérieur), calculé sur les joueurs
+de la saison ayant au moins 15 matchs (4 en playoffs) : `data_sources/nba.compute_radar_scores`.
+Le mode Indice ramène ce z-score, limité à ±3, sur 0-100 ; le mode Centile donne le rang dans le
+poste. Jusqu'à 4 joueurs peuvent être comparés.
+
+**Protection du ballon.** L'axe s'appelait "Sécurité de balle" et utilisait les pertes de balle
+par match brutes, qui suivent surtout le volume de jeu (corrélation +0,78 avec les minutes en
+2024-25) : Dončić, Jokić et Wembanyama étaient tout en bas, des remplaçants à 5 minutes par match
+tout en haut. Il utilise désormais le TOV%, la part des possessions utilisées par le joueur qui
+se terminent en perte de balle. Le TOV% exact (pertes / (tirs + 0,44 lancers francs + pertes))
+n'est pas dans les caches ; il est estimé à partir de l'USG%, qui y est :
+`TOV% ≈ 41,5 × pertes/match / (USG% × minutes/match)`. Contrôle sur 2024-25 contre le TOV% exact
+(tirs et lancers francs du dataset Kaggle, 444 joueurs) : corrélation 0,995, écart médian 0,24
+point, et plus aucun lien avec les minutes (corrélation -0,13). La constante ne change que la
+valeur affichée, pas les scores ; sur les saisons anciennes, au rythme de jeu plus lent, cette
+valeur peut être décalée d'environ 10 %. Le ratio passes décisives / pertes a été écarté : il
+mélange création et protection du ballon (Wembanyama au 28e centile) et devient instable quand
+les pertes sont rares.
+
+**Limites connues.** Scoring, Passe, Rebond, Interceptions et Contres sont des valeurs par match :
+elles favorisent les joueurs qui jouent beaucoup, ce qui est assumé pour un radar de production.
+À l'inverse, 3PT% et LF% favorisent les joueurs qui tirent très peu (56,5 % à 3 points sur une
+tentative par match, 100 % aux lancers francs sur quasiment aucune) : le nombre de tentatives
+n'est pas dans les caches, un avertissement est affiché en attendant un vrai correctif.
+
 ## Métrique défensive individuelle (piste abandonnée)
 
 Une tentative a été faite pour intégrer une métrique de "défense" individuelle

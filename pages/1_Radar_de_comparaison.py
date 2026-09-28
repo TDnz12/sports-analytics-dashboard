@@ -15,6 +15,8 @@ et sans logique métier (celle-ci vit dans data_sources/nba.py, réutilisée tel
 
 from __future__ import annotations
 
+import textwrap
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -184,23 +186,26 @@ if not player_options:
     st.warning(f"Aucun joueur avec des données exploitables pour {season} ({stats_period_label}).")
     st.stop()
 
+MAX_PLAYERS = 4
+
 # Même raison que pour "Saison" ci-dessus (key= plutôt qu'index= recalculé à chaque run) --
 # avec en plus une validité à revérifier à CHAQUE run (pas seulement à la création) : changer de
-# saison/période change player_options, et une valeur déjà en session_state peut ne plus en
-# faire partie (joueur absent de la nouvelle saison/période) -- st.selectbox lève une erreur si
-# la valeur de key= n'est pas dans options, d'où ce repli explicite plutôt que de laisser planter.
-if "radar_player_a" not in st.session_state:
-    st.session_state["radar_player_a"] = (
+# saison/période change player_options, et un joueur déjà sélectionné peut ne plus en faire
+# partie (absent de la nouvelle saison/période) -- st.multiselect lève une erreur si une valeur
+# de key= n'est pas dans options, d'où ce filtrage explicite. Repli sur le premier joueur
+# seulement si le filtrage a tout retiré : une sélection vidée à la main par l'utilisateur reste
+# vide (message plus bas), sinon le joueur retiré reviendrait aussitôt.
+if "radar_players" not in st.session_state:
+    st.session_state["radar_players"] = [
         preselected_player if preselected_player in player_options else player_options[0]
-    )
-elif st.session_state["radar_player_a"] not in player_options:
-    st.session_state["radar_player_a"] = player_options[0]
-player_a = st.sidebar.selectbox("Joueur A", options=player_options, key="radar_player_a")
-
-player_b_options = ["Aucun"] + [p for p in player_options if p != player_a]
-if st.session_state.get("radar_player_b") not in player_b_options:
-    st.session_state["radar_player_b"] = "Aucun"
-player_b = st.sidebar.selectbox("Joueur B (optionnel)", options=player_b_options, key="radar_player_b")
+    ]
+else:
+    kept = [p for p in st.session_state["radar_players"] if p in player_options]
+    if kept != st.session_state["radar_players"]:
+        st.session_state["radar_players"] = kept or [player_options[0]]
+players = st.sidebar.multiselect(
+    f"Joueurs (1 à {MAX_PLAYERS})", options=player_options, max_selections=MAX_PLAYERS, key="radar_players",
+)
 
 if preselected_player and preselected_player not in player_options:
     st.info(
@@ -226,12 +231,24 @@ display_mode = st.radio(
 score_suffix = "_score" if display_mode == "Indice" else "_percentile"
 score_unit = "/100" if display_mode == "Indice" else "ᵉ centile"
 
-PLAYER_COLORS = {"A": ("#1f77b4", "rgba(31,119,180,0.25)"), "B": ("#FF7F0E", "rgba(255,127,14,0.25)")}
-# Décalé haut/bas par joueur : à 10 axes, deux joueurs avec des scores proches sur un même axe
-# (repéré en rendu réel : ex. 66 vs 69) verraient sinon leurs deux labels texte se chevaucher
-# exactement au même point -- un décalage par joueur les sépare verticalement au lieu de les
-# superposer, sans changer la position du point/marker lui-même.
-PLAYER_TEXT_POSITION = {"A": "top center", "B": "bottom center"}
+# Une couleur par position dans la sélection (bleu, orange, vert, violet). Remplissage à 10 %
+# d'opacité (25 % quand il n'y avait que deux joueurs) : à 3-4 formes superposées, un remplissage
+# plus dense masquait les contours des autres joueurs.
+PLAYER_COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd"]
+FILL_OPACITY = 0.10
+
+
+def _fill_color(hex_color: str) -> str:
+    r, g, b = (int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
+    return f"rgba({r},{g},{b},{FILL_OPACITY})"
+
+
+# Valeurs écrites à côté des points seulement jusqu'à 2 joueurs, décalées haut/bas par joueur : à
+# 10 axes, deux joueurs avec des scores proches sur un même axe (repéré en rendu réel : ex. 66 vs
+# 69) verraient sinon leurs deux labels se chevaucher exactement au même point. Au-delà de 2
+# joueurs, plus aucun décalage ne suffit : les valeurs restent lisibles au survol.
+MAX_PLAYERS_WITH_TEXT = 2
+PLAYER_TEXT_POSITIONS = ["top center", "bottom center"]
 
 
 def _player_row(player_name: str) -> pd.Series | None:
@@ -260,20 +277,36 @@ def _player_card(column, player_name: str, color: str) -> None:
         )
 
 
-card_cols = st.columns(2)
-_player_card(card_cols[0], player_a, PLAYER_COLORS["A"][0])
-if player_b != "Aucun":
-    _player_card(card_cols[1], player_b, PLAYER_COLORS["B"][0])
+if players:
+    for column, player_name, color in zip(st.columns(len(players)), players, PLAYER_COLORS):
+        _player_card(column, player_name, color)
+
+# Marge invisible ajoutée à la fin de chaque cellule d'axe du tableau récap. Streamlit ajuste la
+# largeur des colonnes (width="content") en mesurant leur texte, mais dans le navigateur cette
+# mesure sous-estime de quelques pixels les valeurs les plus longues ("14.7  ·  63/100" rogné).
+# Un espace de chiffre (U+2007, environ 7 px) suivi d'un espace insécable (U+00A0, environ 3 px)
+# entre dans la mesure sans rien afficher : chaque colonne s'élargit d'environ 10 px. Des espaces
+# insécables plutôt qu'ordinaires, pour qu'un espace de fin ne puisse pas être retiré ou fusionné.
+RECAP_CELL_END_MARGIN = "\u2007\u00A0"
+
+
+def _format_raw(axis: dict, value) -> str:
+    """Valeur réelle d'un axe au format de RADAR_AXES["fmt"] (les pourcentages nba_api sont des
+    fractions, 0.152 pour 15,2 %), "—" si manquante. Même texte au survol et dans le tableau."""
+    return "—" if pd.isna(value) else axis.get("fmt", "{:.1f}").format(value)
+
 
 theta_labels = [a["label"] for a in axes]
 theta_closed = theta_labels + [theta_labels[0]]
+# Description de chaque axe (clé "help" de RADAR_AXES) ajoutée au survol de ses points, coupée en
+# lignes courtes : Plotly ne revient pas à la ligne tout seul dans une infobulle.
+axis_help = ["<br>".join(textwrap.wrap(a.get("help", ""), 60)) for a in axes]
 
 fig = go.Figure()
 recap_rows = []
 
-for slot, player_name in (("A", player_a), ("B", player_b if player_b != "Aucun" else None)):
-    if player_name is None:
-        continue
+show_text = len(players) <= MAX_PLAYERS_WITH_TEXT
+for i, player_name in enumerate(players):
     row = _player_row(player_name)
     if row is None:
         st.info(f"🔍 **{player_name}** ne correspond à aucune donnée pour {season} ({stats_period_label}).")
@@ -284,27 +317,35 @@ for slot, player_name in (("A", player_a), ("B", player_b if player_b != "Aucun"
     # axe réellement manquant (NaN, distingué de scores_filled qui met 0.0 par défaut juste pour
     # dessiner le contour) -- sinon un axe sans donnée afficherait un trompeur "0".
     point_labels = ["" if pd.isna(s) else f"{s:.0f}" for s in scores]
-    line_color, fill_color = PLAYER_COLORS[slot]
+    # Valeur réelle de chaque axe, au même format que le tableau récap (PIE en %, TOV% estimé...).
+    raw_labels = [_format_raw(a, row.get(a["stat_col"])) for a in axes]
+    hover_data = [[raw, help_txt] for raw, help_txt in zip(raw_labels, axis_help)]
+    line_color = PLAYER_COLORS[i]
     fig.add_trace(go.Scatterpolar(
         r=scores_filled + [scores_filled[0]],
         theta=theta_closed,
         fill="toself",
-        mode="lines+markers+text",
-        text=point_labels + [point_labels[0]],
-        textposition=PLAYER_TEXT_POSITION[slot],
+        mode="lines+markers+text" if show_text else "lines+markers",
+        # Pas de valeur sur le point qui referme le tracé : il se superpose au premier, et la valeur
+        # écrite deux fois au même endroit apparaissait plus grasse que les autres.
+        text=point_labels + [""],
+        textposition=PLAYER_TEXT_POSITIONS[i % len(PLAYER_TEXT_POSITIONS)],
         textfont=dict(color=line_color, size=10),
+        customdata=hover_data + [hover_data[0]],
         name=player_name,
         line=dict(color=line_color, width=2),
         marker=dict(size=5, color=line_color),
-        fillcolor=fill_color,
-        hovertemplate="%{theta} : %{r:.0f}" + score_unit + "<extra>" + player_name + "</extra>",
+        fillcolor=_fill_color(line_color),
+        hovertemplate=(
+            "<b>%{theta} : %{r:.0f}" + score_unit + "</b><br>Valeur réelle : %{customdata[0]}"
+            "<br>%{customdata[1]}<extra>" + player_name + "</extra>"
+        ),
     ))
     recap_row = {"Joueur": player_name}
-    for a, score in zip(axes, scores):
-        raw_val = row.get(a["stat_col"])
+    for a, raw, score in zip(axes, raw_labels, scores):
         recap_row[a["label"]] = (
-            f"{raw_val:.1f}  ·  {score:.0f}{score_unit}" if pd.notna(raw_val) and pd.notna(score) else "—"
-        )
+            f"{raw}  ·  {score:.0f}{score_unit}" if raw != "—" and pd.notna(score) else "—"
+        ) + RECAP_CELL_END_MARGIN
     recap_rows.append(recap_row)
 
 if not fig.data:
@@ -323,29 +364,41 @@ if not fig.data:
 # Grille/texte de l'axe polaire : gris moyen choisi pour rester lisible sur fond clair ET sombre,
 # Streamlit ne thémant pas non plus ces couleurs pour les charts polaires.
 #
-# height/margin/range du radialaxis réglés à partir d'un rendu réel (kaleido) à 10 axes x 2
-# joueurs, pas au jugé : à height=550/range=[0,100] par défaut, le label "Scoring" chevauchait le
-# "100" du point juste en dessous, et le dernier axe ("Efficacité (TS%)", en bas) était coupé par
-# le bord du graph. height=680 + marges 90 de chaque côté + range=[0,122] (au lieu de [0,100],
-# pour laisser un espace radial entre le point à 100 et l'anneau des labels d'axes) corrigent les
-# deux -- revérifier visuellement si le nombre d'axes change encore.
+# Échelle radiale fixée de 0 à 100 : le cercle extérieur correspond exactement au score maximum.
+# Réglages vérifiés sur un rendu réel (kaleido) à 10 axes, 2 et 4 joueurs, 1100 et 700 px de
+# large : quand les valeurs sont écrites à côté des points (1-2 joueurs), le libellé "Scoring"
+# chevauchait la valeur "100" du point juste en dessous, d'où un écart entre le cercle extérieur
+# et les libellés d'axes (graduations invisibles, seul réglage Plotly qui les repousse), réduit
+# au minimum quand les valeurs ne sont visibles qu'au survol ; marges latérales de 150 pour que
+# "Protection du ballon" et "Interceptions" ne soient pas coupés à 700 px ; height=680 pour que
+# "Efficacité (TS%)", en bas, reste dans le graphique. Légende ancrée en haut de la figure
+# (yref="container") et marge du haut calculée pour contenir ses 2 lignes (4 joueurs sur écran
+# étroit), l'écart et le libellé "Scoring" : ancrée juste au-dessus du radar, elle chevauchait
+# "Scoring" dès qu'elle s'étendait jusqu'au centre. Revérifier visuellement si le nombre d'axes
+# change.
 POLAR_AXIS_COLOR = "#888888"
+AXIS_LABEL_GAP = 12 if show_text else 2
+LEGEND_HEIGHT = 50
 fig.update_layout(
     polar=dict(
         bgcolor="rgba(0,0,0,0)",
         radialaxis=dict(
-            visible=True, range=[0, 122], tickvals=[0, 20, 40, 60, 80, 100], ticksuffix="",
+            visible=True, range=[0, 100], tickvals=[0, 20, 40, 60, 80, 100], ticksuffix="",
             gridcolor=POLAR_AXIS_COLOR, linecolor=POLAR_AXIS_COLOR, tickfont=dict(color=POLAR_AXIS_COLOR, size=9),
         ),
         angularaxis=dict(
             direction="clockwise",
+            # Graduations invisibles mais longues : c'est le seul réglage Plotly qui éloigne les
+            # libellés d'axes du cercle extérieur, pour laisser la place aux valeurs des points
+            # à 100 (voir le commentaire au-dessus de POLAR_AXIS_COLOR).
+            ticks="outside", ticklen=AXIS_LABEL_GAP, tickcolor="rgba(0,0,0,0)",
             gridcolor=POLAR_AXIS_COLOR, linecolor=POLAR_AXIS_COLOR, tickfont=dict(color=POLAR_AXIS_COLOR),
         ),
     ),
     paper_bgcolor="rgba(0,0,0,0)",
     height=680,
-    legend=dict(orientation="h", yanchor="bottom", y=1.04, xanchor="left", x=0),
-    margin=dict(t=90, b=90, l=90, r=90),
+    legend=dict(orientation="h", yref="container", yanchor="top", y=1, xanchor="left", x=0),
+    margin=dict(t=LEGEND_HEIGHT + 30 + AXIS_LABEL_GAP, b=60, l=150, r=150),
 )
 st.plotly_chart(fig, width="stretch")
 
@@ -376,6 +429,18 @@ if stats_period == "playoffs":
         "matchs), voir Dashboard.py pour la mesure d'impact complète."
     )
 
+RECAP_PLAYER_WIDTH = 210
 if recap_rows:
-    with st.expander(f"📋 Valeurs brutes par axe (stat/match  ·  {display_mode.lower()})", expanded=True):
-        st.dataframe(pd.DataFrame(recap_rows).set_index("Joueur"), width="stretch")
+    with st.expander(f"📋 Valeurs brutes par axe (valeur réelle  ·  {display_mode.lower()})", expanded=True):
+        # Colonnes d'axes à la largeur de leur contenu (en-tête compris), comme un double-clic
+        # sur le bord de colonne : il faut à la fois ne pas leur donner de largeur et afficher le
+        # tableau en width="content", car en width="stretch" Streamlit élargit toute colonne
+        # sans largeur fixe pour remplir la page. "Joueur" garde une largeur fixe et reste
+        # épinglée, pour que les noms complets restent lisibles quand le tableau défile.
+        st.dataframe(
+            pd.DataFrame(recap_rows), width="content", hide_index=True,
+            column_config={
+                "Joueur": st.column_config.TextColumn(width=RECAP_PLAYER_WIDTH, pinned=True),
+                **{a["label"]: st.column_config.TextColumn(help=a.get("help")) for a in axes},
+            },
+        )

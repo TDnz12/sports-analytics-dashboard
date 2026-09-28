@@ -1518,12 +1518,15 @@ def get_first_game_teams(season: str, force_refresh: bool = False) -> pd.DataFra
 # (proxy box-score, pas une vraie mesure de qualité défensive -- voir METHODOLOGY.md, section
 # "Métrique défensive individuelle").
 #
-# "Sécurité de balle" (turnovers_per_game) est le seul axe où la stat brute va dans le sens
-# INVERSE des autres (moins de pertes de balle = meilleur) -- `invert=True` signale qu'il faut
-# calculer le z-score/percentile sur la stat NÉGÉE (voir compute_radar_scores), pour que "loin du
-# centre = meilleur" reste vrai sur tous les axes du radar, y compris celui-ci. `stat_col` reste
-# la colonne brute réelle (turnovers_per_game) pour l'affichage de la valeur/match dans le
-# tooltip et le tableau récap -- seul le calcul du z-score/percentile utilise la version négée.
+# "Protection du ballon" est le seul axe où la stat brute va dans le sens INVERSE des autres
+# (moins de pertes de balle = meilleur) -- `invert=True` signale qu'il faut calculer le
+# z-score/percentile sur la stat NÉGÉE (voir compute_radar_scores), pour que "loin du centre =
+# meilleur" reste vrai sur tous les axes du radar. Sa colonne, `tov_pct_est`, n'existe pas dans
+# les caches : compute_radar_scores la calcule à la volée (voir TOV_PCT_ESTIMATE_SCALE).
+#
+# Chaque axe porte aussi `help` (ce que mesure l'axe, affiché au survol des points et en infobulle
+# des colonnes du tableau récap) et `fmt` (format de la valeur brute dans ce tableau : les
+# pourcentages nba_api sont des fractions, 0.6 pour 60 %).
 RADAR_STEALS_CAVEAT = (
     " ⚠️ \"Interceptions\" (steals) favorise structurellement les joueurs actifs sur le ballon "
     "(arrières/ailiers qui multiplient les prises de risque défensives) — un intérieur qui "
@@ -1536,40 +1539,71 @@ RADAR_BLOCKS_CAVEAT = (
     "pas son registre. Proxy box-score, pas une vraie mesure de qualité défensive individuelle "
     "(voir METHODOLOGY.md)."
 )
-# "Sécurité de balle" a DEUX caveats distincts (d'où "caveats", une liste, sur cet axe -- les
-# autres axes à caveat n'en ont qu'un) : le biais de volume ci-dessous (même famille que les
-# caveats Interceptions/Contres -- un proxy box-score influencé par le rôle, pas une vraie mesure
-# pure) et la note d'inversion (comment lire l'axe, pas un biais). Un meneur à fort volume de jeu
-# porte le ballon beaucoup plus souvent qu'un rôleur -- il perd donc mécaniquement plus de ballons
-# en ABSOLU (turnovers_per_game n'est pas normalisé par possessions/touches), même s'il est aussi
-# fiable balle en main que ce rôleur. Contrairement à Interceptions/Contres (biais de poste),
-# celui-ci est un biais de RÔLE OFFENSIF (volume de jeu), mais le principe est le même : proxy
-# box-score, pas une mesure pure de fiabilité individuelle indépendante du rôle.
-RADAR_TURNOVERS_BIAS_CAVEAT = (
-    " ⚠️ \"Sécurité de balle\" reste corrélée au volume de jeu : un meneur à fort volume "
-    "(beaucoup de possessions, porteur de balle principal) perd mécaniquement plus de ballons en "
-    "absolu qu'un joueur à faible volume, même s'il est tout aussi fiable balle en main. Pas une "
-    "mesure pure de fiabilité individuelle, indépendante du rôle offensif."
-)
 RADAR_TURNOVERS_NOTE = (
-    " ℹ️ Axe inversé : moins de pertes de balle par match donne un score PLUS élevé sur cet axe, "
-    "pour rester cohérent avec le reste du radar (plus loin du centre = meilleur, partout)."
+    " ℹ️ \"Protection du ballon\" : part des possessions utilisées par le joueur qui se terminent "
+    "en perte de balle (TOV% estimé à partir de l'USG%). Rapportée au volume, elle ne pénalise "
+    "pas les porteurs de balle principaux. Axe inversé : moins de pertes = plus loin du centre."
+)
+# Les tentatives (FG3A/FTA) ne sont pas dans les caches : impossible pour l'instant de fixer un
+# seuil ou de lisser, d'où ce simple avertissement.
+RADAR_SHOOTING_VOLUME_CAVEAT = (
+    " ⚠️ \"Tir extérieur (3PT%)\" et \"Lancers francs (LF%)\" ne tiennent pas compte du nombre de "
+    "tentatives : un joueur qui tire très peu peut afficher un pourcentage extrême (100 % sur "
+    "deux lancers francs, 0 % sur un seul tir à 3 points) et se retrouver au bord du radar."
 )
 
+# TOV% estimé sans réseau : le TOV% exact (pertes / (FGA + 0,44 FTA + pertes)) n'est pas dans le
+# cache nba_api, mais USG% x minutes est proportionnel au nombre d'actions terminées par le
+# joueur. Constante calibrée sur 2024-25 contre le TOV% exact (Kaggle) : corrélation 0,995, écart
+# médian 0,24 point. Elle ne change que la valeur affichée, pas le z-score ni le centile
+# (invariants à l'échelle) ; sur les saisons anciennes, au rythme de jeu plus lent, la valeur
+# affichée peut être décalée d'environ 10 %.
+TOV_PCT_ESTIMATE_SCALE = 41.5
+
 RADAR_AXES: list[dict] = [
-    {"key": "scoring", "label": "Scoring", "stat_col": "points_per_game"},
-    {"key": "passe", "label": "Passe", "stat_col": "assists_per_game"},
-    {"key": "rebond", "label": "Rebond", "stat_col": "rebounds_per_game"},
-    {"key": "interceptions", "label": "Interceptions", "stat_col": "steals_per_game", "caveats": [RADAR_STEALS_CAVEAT]},
-    {"key": "contres", "label": "Contres", "stat_col": "blocks_per_game", "caveats": [RADAR_BLOCKS_CAVEAT]},
-    {"key": "efficacite", "label": "Efficacité (TS%)", "stat_col": "ts_pct"},
-    {"key": "impact", "label": "Impact global (PIE)", "stat_col": "pie"},
-    {"key": "tir_exterieur", "label": "Tir extérieur (3PT%)", "stat_col": "fg3_pct"},
     {
-        "key": "securite_balle", "label": "Sécurité de balle", "stat_col": "turnovers_per_game",
-        "invert": True, "caveats": [RADAR_TURNOVERS_BIAS_CAVEAT, RADAR_TURNOVERS_NOTE],
+        "key": "scoring", "label": "Scoring", "stat_col": "points_per_game", "fmt": "{:.1f}",
+        "help": "Points marqués par match.",
     },
-    {"key": "lancers_francs", "label": "Lancers francs (LF%)", "stat_col": "ft_pct"},
+    {
+        "key": "passe", "label": "Passe", "stat_col": "assists_per_game", "fmt": "{:.1f}",
+        "help": "Passes décisives par match.",
+    },
+    {
+        "key": "rebond", "label": "Rebond", "stat_col": "rebounds_per_game", "fmt": "{:.1f}",
+        "help": "Rebonds (offensifs et défensifs) par match.",
+    },
+    {
+        "key": "interceptions", "label": "Interceptions", "stat_col": "steals_per_game", "fmt": "{:.1f}",
+        "caveats": [RADAR_STEALS_CAVEAT], "help": "Interceptions par match.",
+    },
+    {
+        "key": "contres", "label": "Contres", "stat_col": "blocks_per_game", "fmt": "{:.1f}",
+        "caveats": [RADAR_BLOCKS_CAVEAT], "help": "Contres par match.",
+    },
+    {
+        "key": "efficacite", "label": "Efficacité (TS%)", "stat_col": "ts_pct", "fmt": "{:.1%}",
+        "help": "True shooting % : efficacité au tir qui compte les tirs à 3 points et les lancers francs.",
+    },
+    {
+        "key": "impact", "label": "Impact global (PIE)", "stat_col": "pie", "fmt": "{:.1%}",
+        "help": "Player Impact Estimate : part des actions positives du match attribuable au joueur.",
+    },
+    {
+        "key": "tir_exterieur", "label": "Tir extérieur (3PT%)", "stat_col": "fg3_pct", "fmt": "{:.1%}",
+        "caveats": [RADAR_SHOOTING_VOLUME_CAVEAT],
+        "help": "Réussite à 3 points, sans tenir compte du nombre de tentatives.",
+    },
+    {
+        "key": "protection_ballon", "label": "Protection du ballon", "stat_col": "tov_pct_est",
+        "fmt": "{:.1f}%", "invert": True, "caveats": [RADAR_TURNOVERS_NOTE],
+        "help": "Pourcentage estimé des possessions utilisées qui finissent en perte de balle. "
+                "Plus c'est bas, mieux c'est (axe inversé).",
+    },
+    {
+        "key": "lancers_francs", "label": "Lancers francs (LF%)", "stat_col": "ft_pct", "fmt": "{:.1%}",
+        "help": "Réussite aux lancers francs, sans tenir compte du nombre de tentatives.",
+    },
 ]
 
 # Collectés depuis RADAR_AXES plutôt que maintenus séparément : évite qu'un axe ajouté/retiré avec
@@ -1621,12 +1655,20 @@ def compute_radar_scores(df: pd.DataFrame, period: PlayoffMode = "regular") -> p
     pages/1_Radar_de_comparaison.py n'ait pas besoin d'importer les constantes de seuil -- il
     passe déjà `stats_period` ("regular"/"playoffs"), cohérent avec le reste de l'app.
 
-    Un axe avec `invert=True` (voir RADAR_AXES -- actuellement "Sécurité de balle") calcule son
+    Un axe avec `invert=True` (voir RADAR_AXES -- actuellement "Protection du ballon") calcule son
     z-score/percentile sur l'OPPOSÉ de `stat_col` (colonne temporaire, supprimée avant de
-    retourner) : `stat_col` lui-même n'est jamais modifié, il reste la vraie valeur/match pour
-    l'affichage (tooltip, tableau récap) -- seul le calcul de position dans le radar est inversé."""
+    retourner) : `stat_col` lui-même n'est jamais modifié, il reste la vraie valeur pour
+    l'affichage (tooltip, tableau récap) -- seul le calcul de position dans le radar est inversé.
+
+    Ajoute aussi `tov_pct_est` (voir TOV_PCT_ESTIMATE_SCALE), calculé ici plutôt que stocké dans
+    les caches : il ne dépend que de colonnes déjà présentes, donc aucun cache à recalculer. NaN
+    quand USG% x minutes vaut 0 (quelques très petits temps de jeu en playoffs), plutôt qu'une
+    valeur infinie."""
     min_games = MIN_GAMES_FOR_FIT_PLAYOFFS if period == "playoffs" else MIN_GAMES_FOR_FIT
     result = df.copy()
+    if {"turnovers_per_game", "usg_pct", "minutes_per_game"} <= set(result.columns):
+        plays = result["usg_pct"] * result["minutes_per_game"]
+        result["tov_pct_est"] = (TOV_PCT_ESTIMATE_SCALE * result["turnovers_per_game"] / plays).where(plays > 0)
 
     if "position_group" not in result.columns:
         for axis in RADAR_AXES:
