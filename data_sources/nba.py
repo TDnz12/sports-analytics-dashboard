@@ -540,6 +540,7 @@ def _fetch_nba_api_stats(
         season=season,
         season_type_all_star=season_type,
         per_mode_detailed="PerGame",
+        timeout=NBA_API_TIMEOUT_SECONDS,
     )
     base = leaguedashplayerstats.LeagueDashPlayerStats(
         measure_type_detailed_defense="Base", **common_kwargs
@@ -636,6 +637,7 @@ def _fetch_player_positions(season: str, force_refresh: bool = False) -> pd.Data
             lambda pos=pos: leaguedashplayerstats.LeagueDashPlayerStats(
                 season=season, season_type_all_star="Regular Season", per_mode_detailed="PerGame",
                 measure_type_detailed_defense="Base", player_position_abbreviation_nullable=pos,
+                timeout=NBA_API_TIMEOUT_SECONDS,
             ).get_data_frames()[0],
             description=f"_fetch_player_positions({season}, poste={pos})",
         )
@@ -679,7 +681,8 @@ def _fetch_team_games_possible(season: str, force_refresh: bool = False) -> int:
     from nba_api.stats.endpoints import leaguedashteamstats
 
     team_stats = leaguedashteamstats.LeagueDashTeamStats(
-        season=season, season_type_all_star="Regular Season", per_mode_detailed="Totals"
+        season=season, season_type_all_star="Regular Season", per_mode_detailed="Totals",
+        timeout=NBA_API_TIMEOUT_SECONDS,
     ).get_data_frames()[0]
     games_possible = int(pd.to_numeric(team_stats["GP"], errors="coerce").max())
 
@@ -721,7 +724,8 @@ def _fetch_team_stats(season: str, period: str = "regular", force_refresh: bool 
 
     from nba_api.stats.endpoints import leaguedashplayerstats, leaguedashteamstats
 
-    common_kwargs = dict(season=season, season_type_all_star=season_type, per_mode_detailed="PerGame")
+    common_kwargs = dict(season=season, season_type_all_star=season_type, per_mode_detailed="PerGame",
+                         timeout=NBA_API_TIMEOUT_SECONDS)
     merged = None
     for measure_type, cols in TEAM_STATS_MEASURE_COLS.items():
         raw = leaguedashteamstats.LeagueDashTeamStats(

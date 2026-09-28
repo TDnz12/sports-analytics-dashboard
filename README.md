@@ -77,7 +77,7 @@ PYTHONPATH=. python scripts/prefill_cache.py --force     # tout recalculer
 ## Tests
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -t .   # tests Python (fiabilité, table des logos)
+.venv/bin/python -m unittest discover -s tests -t .   # tests Python (fiabilité, table des logos, caches complets)
 .venv/bin/python tests/apptest_effectifs.py           # page Effectifs de bout en bout avec AppTest (~1 min)
 cd tests/js && npm install && npm test                 # JavaScript de la grille Effectifs (node + jsdom)
 ```
