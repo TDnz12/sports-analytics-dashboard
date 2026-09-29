@@ -3,7 +3,7 @@ Radar de comparaison de joueurs — page séparée du dashboard principal (Dashb
 pas de comportement), voir la proposition validée. Page Streamlit indépendante (système
 multi-page natif basé sur le dossier pages/ à côté de Dashboard.py) : exécutée du début à la fin à
 chaque interaction comme n'importe quel script Streamlit, mais partage st.session_state avec
-Dashboard.py — c'est ce qui permet au bouton "🎯 Voir le profil radar" de la sidebar principale de
+Dashboard.py — c'est ce qui permet au bouton "Voir le profil radar" de la sidebar principale de
 pré-sélectionner un joueur ici via st.switch_page().
 
 Duplique volontairement quelques petits éléments de Dashboard.py (bloc CSS de densité, fonction de
@@ -23,7 +23,7 @@ import streamlit as st
 
 from data_sources import SPORTS
 
-st.set_page_config(page_title="Radar de comparaison — Sports Analytics", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="Radar de comparaison — Sports Analytics", layout="wide")
 
 # Même bloc de densité que Dashboard.py (voir son commentaire d'origine) — dupliqué ici pour que cette
 # page ait la même respiration visuelle que le dashboard principal, sans dépendre de Dashboard.py.
@@ -52,7 +52,7 @@ st.markdown(
         align-items: center;
     }
     div[data-testid="stLogoSpacer"]::before {
-        content: "🎯 Radar de comparaison";
+        content: "Radar de comparaison";
         font-weight: 700;
         font-size: 1rem;
         white-space: nowrap;
@@ -111,7 +111,7 @@ st.markdown(
 # qu'un second sport n'a pas sa propre implémentation radar.
 sport = SPORTS["nba"]
 if not sport.radar_axes or sport.compute_radar_scores is None:
-    st.title("🎯 Radar de comparaison")
+    st.title("Radar de comparaison")
     st.info("Le radar de comparaison n'est pas encore disponible pour ce sport.")
     st.stop()
 
@@ -126,7 +126,7 @@ STATS_PERIOD_OPTIONS = {
     "Playoffs uniquement": "playoffs",
 }
 
-# Pré-sélection déposée par Dashboard.py (bouton "🎯 Voir le profil radar") — pop() pour ne
+# Pré-sélection déposée par Dashboard.py (bouton "Voir le profil radar") — pop() pour ne
 # pré-sélectionner qu'une fois, même pattern que _pending_force_refresh dans Dashboard.py.
 preselected_player = st.session_state.pop("radar_preselect_player", None)
 preselected_season = st.session_state.pop("radar_preselect_season", None)
@@ -209,11 +209,11 @@ players = st.sidebar.multiselect(
 
 if preselected_player and preselected_player not in player_options:
     st.info(
-        f"🔍 **{preselected_player}** n'a pas de données exploitables pour {season} "
+        f"**{preselected_player}** n'a pas de données exploitables pour {season} "
         f"({stats_period_label}) — sélectionne une autre saison ou un autre joueur."
     )
 
-st.title(f"🎯 Radar de comparaison — {season}")
+st.title(f"Radar de comparaison — {season}")
 
 # Toggle Indice / Centile (inspiré de Data'Scout) : les deux lisent les colonnes déjà calculées
 # par compute_radar_scores (radar_<key>_score / radar_<key>_percentile), même référence (poste +
@@ -272,7 +272,11 @@ def _player_card(column, player_name: str, color: str) -> None:
     row = _player_row(player_name)
     with column:
         games = row.get("games_played") if row is not None else None
-        games_txt = f"{games:.0f} match(s) pris en compte" if row is not None and pd.notna(games) else "—"
+        if row is not None and pd.notna(games):
+            n_games = int(round(games))
+            games_txt = f"{n_games} match" if n_games < 2 else f"{n_games} matchs"
+        else:
+            games_txt = "—"
         st.markdown(
             f"""<div style="border-left: 4px solid {color}; padding: 0.3rem 0.9rem;">
             <div style="font-weight: 600; font-size: 1.05rem;">{player_name}</div>
@@ -333,7 +337,7 @@ show_text = len(players) <= MAX_PLAYERS_WITH_TEXT
 for i, player_name in enumerate(players):
     row = _player_row(player_name)
     if row is None:
-        st.info(f"🔍 **{player_name}** ne correspond à aucune donnée pour {season} ({stats_period_label}).")
+        st.info(f"**{player_name}** ne correspond à aucune donnée pour {season} ({stats_period_label}).")
         continue
     scores = [row.get(f"radar_{a['key']}{score_suffix}") for a in axes]
     # Axe sans valeur (ex. aucune tentative à 3 points) : point retiré du tracé plutôt que placé au
@@ -498,7 +502,7 @@ for caveat in (sport.radar_caveats or []):
 # uniquement en playoffs, même principe que les autres caveats conditionnels de l'app.
 if stats_period == "playoffs":
     st.caption(
-        " ℹ️ Population de référence (poste + saison) construite avec un seuil de 4 matchs "
+        " Note : population de référence (poste + saison) construite avec un seuil de 4 matchs "
         "minimum en playoffs (contre 15 en saison régulière) — 15 serait structurellement "
         "intenable ici (le maximum réellement jouable en playoffs tourne autour de 22-23 "
         "matchs), voir Dashboard.py pour la mesure d'impact complète."
@@ -506,7 +510,7 @@ if stats_period == "playoffs":
 
 RECAP_PLAYER_WIDTH = 210
 if recap_rows:
-    with st.expander(f"📋 Valeurs brutes par axe (valeur réelle  ·  {display_mode.lower()})", expanded=True):
+    with st.expander(f"Valeurs brutes par axe (valeur réelle  ·  {display_mode.lower()})", expanded=True):
         # Colonnes d'axes à la largeur de leur contenu (en-tête compris), comme un double-clic
         # sur le bord de colonne : il faut à la fois ne pas leur donner de largeur et afficher le
         # tableau en width="content", car en width="stretch" Streamlit élargit toute colonne

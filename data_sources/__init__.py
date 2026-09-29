@@ -37,7 +37,7 @@ class SportConfig:
     metrics: Optional[dict] = None
     # Champion (récompense collective, pas un lauréat individuel) par saison, {season: team} --
     # optionnel : None pour un sport qui n'a pas encore cette donnée, Dashboard.py doit gérer l'absence
-    # sans planter (voir badge 🏆 du classement d'équipes).
+    # sans planter (voir la mention "Champion" du classement d'équipes).
     champions_by_season: Optional[dict] = None
     # Récompenses individuelles (MVP, DPOY...) : award_badges_fn(df) -> Series de listes de codes
     # par ligne (voir nba.get_award_badges) ; award_icons/award_labels pour l'affichage. Les 3

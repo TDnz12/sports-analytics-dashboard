@@ -421,9 +421,10 @@ def match_season_awards(df: pd.DataFrame, season: str) -> dict[str, list[str]]:
 # d'insertion volontaire (MVP, DPOY, ROY, MIP, 6MOY, FINALS_MVP), réutilisé par Dashboard.py pour
 # construire le badge composite dans un ordre stable quand un joueur cumule plusieurs récompenses
 # la même saison (ex. SGA 2024-25 : MVP + Finals MVP -> "👑🎖️", pas l'inverse selon l'ordre
-# d'itération d'un dict non garanti). Choisies pour ne pas réutiliser une icône déjà présente
-# ailleurs dans le dashboard : 🏆 reste exclusif au badge d'équipe championne (CHAMPIONS_BY_SEASON,
-# récompense collective), ⚠️/◆ à l'échantillon court, 📈/📊/🔍 aux titres de section.
+# d'itération d'un dict non garanti). Seules icônes du dashboard : elles servent d'étiquettes
+# au-dessus des points primés, le survol en donne la légende ("👑 MVP"). L'équipe championne
+# (CHAMPIONS_BY_SEASON, récompense collective) est marquée par le texte "Champion", l'échantillon
+# court par le losange ◆.
 AWARD_ICONS: dict[str, str] = {
     "MVP": "👑",
     "DPOY": "🛡️",
@@ -1577,24 +1578,24 @@ def get_first_game_teams(season: str, force_refresh: bool = False) -> pd.DataFra
 # des colonnes du tableau récap) et `fmt` (format de la valeur brute dans ce tableau : les
 # pourcentages nba_api sont des fractions, 0.6 pour 60 %).
 RADAR_STEALS_CAVEAT = (
-    " ⚠️ \"Interceptions\" (steals) favorise structurellement les joueurs actifs sur le ballon "
+    " Attention : \"Interceptions\" (steals) favorise structurellement les joueurs actifs sur le ballon "
     "(arrières/ailiers qui multiplient les prises de risque défensives) — un intérieur qui "
     "défend par positionnement peut en avoir peu sans être un mauvais défenseur. Proxy "
     "box-score, pas une vraie mesure de qualité défensive individuelle (voir METHODOLOGY.md)."
 )
 RADAR_BLOCKS_CAVEAT = (
-    " ⚠️ \"Contres\" (blocks) favorise structurellement les intérieurs (proximité du cercle) — "
+    " Attention : \"Contres\" (blocks) favorise structurellement les intérieurs (proximité du cercle) — "
     "un extérieur qui en a peu n'est pas nécessairement moins bon défenseur, ce n'est simplement "
     "pas son registre. Proxy box-score, pas une vraie mesure de qualité défensive individuelle "
     "(voir METHODOLOGY.md)."
 )
 RADAR_TURNOVERS_NOTE = (
-    " ℹ️ \"Protection du ballon\" : part des possessions utilisées par le joueur qui se terminent "
+    " Note : \"Protection du ballon\" : part des possessions utilisées par le joueur qui se terminent "
     "en perte de balle (TOV% estimé à partir de l'USG%). Rapportée au volume, elle ne pénalise "
     "pas les porteurs de balle principaux. Axe inversé : moins de pertes = plus loin du centre."
 )
 RADAR_SHOOTING_PADDING_NOTE = (
-    " ℹ️ \"Tir extérieur (3PT%)\" et \"Lancers francs (LF%)\" : la position sur le radar utilise un "
+    " Note : \"Tir extérieur (3PT%)\" et \"Lancers francs (LF%)\" : la position sur le radar utilise un "
     "pourcentage ajusté, qui ajoute au joueur 242 tirs à 3 points (156 lancers francs) fictifs "
     "réussis à la moyenne de son poste, sur la saison et le type de stats choisis. Un joueur qui "
     "tire peu reste donc proche de la moyenne de son poste (2/2 aux lancers francs ne donne plus "

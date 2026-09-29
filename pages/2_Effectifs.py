@@ -33,10 +33,10 @@ navigateur mettait ~2 s à redessiner la page à chaque clic -- mesuré, voir l'
 
 Règles (implémentées dans MERCATO_GRID_JS, partie "fonctions d'état pures") : étiquettes
 M/A/AI/AF/P/6e attachées au SLOT, jamais au joueur ; vrai mercato (un joueur ajouté quitte son
-ancienne carte, toast) ; pas de ⚠️ pour un joueur ajouté ; glisser-déposer (Pointer Events, souris
+ancienne carte, toast) ; pas de badge « ? » pour un joueur ajouté ; glisser-déposer (Pointer Events, souris
 et doigt, appui long de 300 ms au doigt pour laisser la page défiler) : vers une tuile vide = le
 joueur s'y déplace, sur un autre joueur = les deux échangent leur place (toast seulement entre deux
-cartes), hors tuile = rien ; un joueur qui change de carte perd son ⚠️, comme un ajout, et le
+cartes), hors tuile = rien ; un joueur qui change de carte perd son badge « ? », comme un ajout, et le
 retrouve dès qu'il revient dans sa carte d'origine (quelle que soit sa place) ; le reset d'une
 équipe reprend ses joueurs d'origine transférés ailleurs (toast), et renvoie un joueur venu
 d'ailleurs à sa place d'origine dans son autre carte si elle est vide (toast ; sinon il sort) ; marqueur "modifiée" sur toute carte différente de
@@ -87,7 +87,7 @@ import streamlit as st
 
 from data_sources import SPORTS
 
-st.set_page_config(page_title="Effectifs — Sports Analytics", page_icon="👥", layout="wide")
+st.set_page_config(page_title="Effectifs — Sports Analytics", layout="wide")
 
 # Même bloc de densité que Dashboard.py / pages/1_Radar_de_comparaison.py (copié tel quel, voir
 # leur commentaire d'origine pour le détail de chaque règle) -- seul le texte du titre
@@ -112,7 +112,7 @@ st.markdown(
         align-items: center;
     }
     div[data-testid="stLogoSpacer"]::before {
-        content: "👥 Effectifs";
+        content: "Effectifs";
         font-weight: 700;
         font-size: 1rem;
         white-space: nowrap;
@@ -226,7 +226,7 @@ st.iframe(
 # MVP : NBA uniquement, même raison que pages/1_Radar_de_comparaison.py.
 sport = SPORTS["nba"]
 if sport.get_mercato_lineup is None or sport.get_player_stats is None:
-    st.title("👥 Effectifs")
+    st.title("Effectifs")
     st.info("Effectifs pas encore disponibles pour ce sport.")
     st.stop()
 
@@ -389,7 +389,7 @@ if team_code:
     try:
         players_df = load_players(sport.key, season)
     except Exception as exc:
-        st.title("👥 Effectifs")
+        st.title("Effectifs")
         st.error(f"Impossible de charger les joueurs de {season} : {exc}")
         st.stop()
     # Identité indisponible (ex. serveur NBA injoignable sans cache) : pas bloquant, le code
@@ -406,12 +406,12 @@ if team_code:
 
     roster_df = players_df[players_df["team"] == team_code].sort_values("player").reset_index(drop=True)
     if roster_df.empty and team_code not in identity:
-        st.title("👥 Effectifs")
+        st.title("Effectifs")
         st.warning(f"Aucune équipe « {team_code} » pour la saison {season}.")
         st.stop()
 
     team_name = identity[team_code][1] if team_code in identity else team_code
-    st.title(f"👥 {team_name} — Effectif réel {season}")
+    st.title(f"{team_name} — Effectif réel {season}")
     st.caption(
         f"Tous les joueurs de l'équipe d'après les statistiques officielles de la saison régulière "
         f"{season}. Les modifications faites dans la grille (✕, ⇄, +) n'apparaissent pas ici."
@@ -480,7 +480,7 @@ def prepare_season(sport_key: str, season: str) -> dict:
         triées par nom affiché ;
       - players : [[player_id, nom, équipe], ...] de TOUS les joueurs de la saison (recherche),
         triés par nom ;
-      - missing : player_id dont le poste est inconnu dans la composition d'origine (⚠️) ;
+      - missing : player_id dont le poste est inconnu dans la composition d'origine (badge « ? ») ;
       - photo_team_ids : {player_id: team_id du premier match}, voir season_photo_team_ids ({}
         avant 2015-16 ou si le game log est indisponible, non bloquant).
     Lève l'exception de get_mercato_lineup si la composition est introuvable (jamais mise en
@@ -766,11 +766,20 @@ MERCATO_GRID_CSS = r"""
   border-radius: 0.3rem;
   z-index: 2;
 }
+/* Pastille grise "?" : poste inconnu dans les données (détail en infobulle). */
 .mg-warning {
   position: absolute;
-  top: 0.15rem;
-  right: 0.3rem;
-  font-size: 0.85rem;
+  top: 0.25rem;
+  right: 0.25rem;
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  background: #6b7280;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.7rem;
+  line-height: 1.05rem;
+  text-align: center;
   z-index: 2;
   cursor: help;
 }
@@ -1022,7 +1031,7 @@ export function fingerprint(data) {
 }
 
 // État = { slots: {équipe: [player_id | null] x 6}, added: [player_id...] }. `added` = joueurs
-// placés via la recherche : jamais de ⚠️ pour eux (le ⚠️ ne concerne que la composition d'origine).
+// placés via la recherche : jamais de badge « ? » pour eux (le badge ne concerne que la composition d'origine).
 export function initialState(data) {
   const slots = {};
   for (const t of data.teams) slots[t.code] = t.slots.map((s) => (s == null ? null : s));
@@ -1059,7 +1068,7 @@ export function originSlot(data, pid) {
 }
 
 // `added` après l'arrivée du joueur pid dans la carte `team` : retiré s'il revient dans sa carte
-// d'origine (quelle que soit sa place : il retrouve son ⚠️ éventuel), ajouté sinon.
+// d'origine (quelle que soit sa place : il retrouve son badge « ? » éventuel), ajouté sinon.
 function placeInAdded(s, data, pid, team) {
   const origin = originSlot(data, pid);
   const home = origin != null && origin.team === team;
@@ -1082,7 +1091,7 @@ export function addPlayer(state, data, team, idx, pid) {
 }
 
 // Intervertit le slot idx avec son voisin de droite (0..4 ; 4 = P <-> 6e). Les étiquettes
-// restent aux slots, le ⚠️ suit le joueur.
+// restent aux slots, le badge « ? » suit le joueur.
 export function swapRight(state, team, idx) {
   if (!(idx >= 0 && idx < SLOT_LABELS.length - 1)) return state;
   const s = cloneState(state);
@@ -1098,7 +1107,7 @@ export function swapRight(state, team, idx) {
 //   - "swap"     : sur un autre joueur de la même carte (les deux échangent leur place) ;
 //   - "transfer" : vers une tuile vide d'une autre carte ;
 //   - "trade"    : sur un joueur d'une autre carte (chacun prend la place de l'autre).
-// Étiquettes fixes au slot. Un joueur qui change de carte entre dans `added` (plus de ⚠️), comme
+// Étiquettes fixes au slot. Un joueur qui change de carte entre dans `added` (plus de badge « ? »), comme
 // un transfert par la recherche, sauf s'il revient dans sa carte d'origine (retiré de `added`, voir
 // placeInAdded) ; dans une même carte, `added` ne change pas (comme avec ⇄).
 export function moveOrSwap(state, data, from, to) {
@@ -1129,9 +1138,9 @@ export function autoScrollStep(y, viewportHeight, edge = 60, max = 18) {
 
 // Remet l'équipe dans sa composition d'origine. Un joueur d'origine transféré entre-temps dans
 // une autre carte en est REPRIS (son slot là-bas devient vide) : renvoyé dans `returned` pour
-// le toast. Les joueurs d'origine retrouvent leur ⚠️ éventuel (retirés de `added`). Un joueur
+// le toast. Les joueurs d'origine retrouvent leur badge « ? » éventuel (retirés de `added`). Un joueur
 // venu d'ailleurs qui sort de la carte retourne à sa place d'origine dans une AUTRE carte si elle
-// est vide (`restored`, toast, ⚠️ rétabli) ; sinon il sort de la grille.
+// est vide (`restored`, toast, badge « ? » rétabli) ; sinon il sort de la grille.
 export function resetTeam(state, data, team) {
   const orig = data.teams.find((t) => t.code === team).slots.map((s) => (s == null ? null : s));
   const s = cloneState(state);
@@ -1442,7 +1451,7 @@ function createGrid(host) {
       img.draggable = false; // pas de glisser natif de l'image (il doublerait le nôtre)
       tile.append(img, el("span", "mg-badge", SLOT_LABELS[j]));
       if (showWarning(state, missingIds, pid)) {
-        const warn = el("span", "mg-warning", "⚠️");
+        const warn = el("span", "mg-warning", "?");
         warn.title = "Poste inconnu dans les données : étiquette approximative";
         tile.append(warn);
       }
@@ -1843,7 +1852,7 @@ export default function (component) {
 # une définition DIFFÉRENTE sous le même nom déclenche un avertissement).
 mercato_grid = st.components.v2.component("mercato_grid", css=MERCATO_GRID_CSS, js=MERCATO_GRID_JS)
 
-st.title("👥 Effectifs")
+st.title("Effectifs")
 st.caption(
     "Clique sur le nom d'une équipe pour voir son effectif complet, ou refais les compositions "
     "avec ✕, ⇄ et +, ou en faisant glisser un joueur (appui long sur écran tactile)."

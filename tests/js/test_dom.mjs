@@ -597,7 +597,7 @@ test("défilement automatique près du bord bas puis haut, dans le conteneur qui
   delete host.clientHeight;
 });
 
-test("⚠️ : suit le joueur dans sa carte, disparaît quand il change de carte (échange)", () => {
+test("badge « ? » : suit le joueur dans sa carte, disparaît quand il change de carte (échange)", () => {
   const warn = structuredClone(data1);
   warn.season = "test-warning";
   const den = teamOf(warn, "DEN").slots;
@@ -611,7 +611,7 @@ test("⚠️ : suit le joueur dans sa carte, disparaît quand il change de carte
   mouseDrag("DEN", 0, tileAt("LAL", 0).querySelector("img"));
   assert.equal(pidAt("LAL", 0), den[3]);
   assert.equal(hasWarn("LAL", 0), false);
-  // retour dans sa carte d'origine, sur une autre place que la sienne : ⚠️ rétabli
+  // retour dans sa carte d'origine, sur une autre place que la sienne : badge « ? » rétabli
   mouseDrag("LAL", 0, tileAt("DEN", 5).querySelector("img"));
   assert.equal(pidAt("DEN", 5), den[3]);
   assert.equal(hasWarn("DEN", 5), true);

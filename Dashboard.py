@@ -17,7 +17,7 @@ import streamlit as st
 
 from data_sources import SPORTS
 
-st.set_page_config(page_title="Sports Analytics Dashboard", page_icon="🏀", layout="wide")
+st.set_page_config(page_title="Sports Analytics Dashboard", layout="wide")
 
 # CSS de densité : réduit les marges/espacements par défaut de Streamlit pour que le graph
 # tienne à l'écran sans scroll au chargement. Purement présentationnel (aucune logique
@@ -51,21 +51,21 @@ st.markdown(
         padding-bottom: 0.25rem !important;
     }
 
-    /* Titre "🏆 Sports Analytics" déplacé ICI (retour utilisateur), dans stLogoSpacer -- un
+    /* Titre "Sports Analytics" déplacé ICI (retour utilisateur), dans stLogoSpacer -- un
        emplacement vide que Streamlit réserve dans cette même rangée pour un futur st.logo(), donc
        juste à gauche du bouton « replier la sidebar ». width: auto (au lieu de 0 par défaut, vide
        tant qu'aucun logo n'est fourni) + contenu via ::before (pas de balise <img>/texte natif
        disponible ici, juste ce slot vide) : fusionne le titre et cette rangée au lieu de deux
        lignes séparées, l'ancien st.sidebar.title() plus bas est retiré en conséquence (voir plus
        bas dans le script). Testé en direct : tient largement même avec le titre le plus long des
-       3 pages ("🎯 Radar de comparaison"), pas de chevauchement avec le bouton. */
+       3 pages ("Radar de comparaison"), pas de chevauchement avec le bouton. */
     div[data-testid="stLogoSpacer"] {
         width: auto !important;
         display: flex;
         align-items: center;
     }
     div[data-testid="stLogoSpacer"]::before {
-        content: "🏆 Sports Analytics";
+        content: "Sports Analytics";
         font-weight: 700;
         font-size: 1rem;
         white-space: nowrap;
@@ -167,7 +167,7 @@ if not sport.available:
     st.sidebar.info("Ce sport n'est pas encore disponible dans le MVP.")
     st.title(f"{sport.label}")
     st.info(
-        "🚧 Ce sport arrive dans une prochaine version. "
+        "Ce sport arrive dans une prochaine version. "
         "Seul **Basketball (NBA)** est actif pour l'instant. "
         "L'architecture du projet (`data_sources/<sport>.py`) est déjà prête à l'accueillir."
     )
@@ -274,7 +274,7 @@ if is_all_seasons:
     df = pd.concat(frames, ignore_index=True)
     if failed_seasons:
         st.warning(
-            "⚠️ Certaines saisons n'ont pas pu être chargées et sont absentes du graph : "
+            "Certaines saisons n'ont pas pu être chargées et sont absentes du graph : "
             + ", ".join(f"{s} ({exc})" for s, exc in failed_seasons)
         )
 else:
@@ -353,7 +353,7 @@ size_key = st.sidebar.selectbox(
 st.sidebar.markdown("---")
 player_options = ["Aucun"] + sorted(df["player"].dropna().unique().tolist())
 searched_player = st.sidebar.selectbox(
-    "🔍 Rechercher un joueur",
+    "Rechercher un joueur",
     options=player_options,
     index=0,
     help="Tape un nom pour filtrer la liste. Le joueur sélectionné est entouré sur le graph.",
@@ -373,14 +373,14 @@ def _handle_radar_click() -> None:
 
 if searched_player != "Aucun":
     st.sidebar.button(
-        "🎯 Voir le profil radar", on_click=_handle_radar_click,
+        "Voir le profil radar", on_click=_handle_radar_click,
         help="Ouvre la vue radar de comparaison de profils avec ce joueur pré-sélectionné.",
     )
 
 # Filtres avancés repliés (équipe, seuils minutes/matchs, salaires estimés, rafraîchir) -- voir le
 # commentaire d'ordre de la sidebar plus haut. expanded=False : replié par défaut, l'utilisateur
 # l'ouvre seulement s'il en a besoin ce jour-là.
-with st.sidebar.expander("⚙️ Filtres avancés"):
+with st.sidebar.expander("Filtres avancés"):
     teams = sorted(df["team"].dropna().unique().tolist())
     team_filter = st.multiselect("Filtrer par équipe (optionnel)", options=teams)
 
@@ -400,7 +400,7 @@ with st.sidebar.expander("⚙️ Filtres avancés"):
         help=(
             "Filtre uniquement l'affichage (graph + tableau). Un seuil interne "
             f"({_internal_threshold_txt}, voir data_sources/nba.py) est indépendant de ce curseur — "
-            "les joueurs sous ce seuil sont visibles par défaut (badge ⚠️ losange creux dans le "
+            "les joueurs sous ce seuil sont visibles par défaut (losange creux dans le "
             "graph, échantillon court), à toi de décider si tu veux les masquer."
         ),
     )
@@ -420,7 +420,9 @@ with st.sidebar.expander("⚙️ Filtres avancés"):
         )
 
     st.markdown("---")
-    st.button("🔄 Rafraîchir les données (re-télécharger)", on_click=_handle_refresh_click)
+    st.button(
+        "Rafraîchir les données (re-télécharger)", icon=":material/refresh:", on_click=_handle_refresh_click
+    )
 
 
 # --------------------------------------------------------------------------
@@ -445,7 +447,7 @@ x_meta, y_meta = metrics[x_key], metrics[y_key]
 # --------------------------------------------------------------------------
 # Contenu principal
 # --------------------------------------------------------------------------
-st.title(f"🏀 {sport.label} — {season}")
+st.title(f"{sport.label} — {season}")
 
 # Texte de méthodologie/sources — calculé ici mais affiché plus bas dans un expander replié,
 # pour que le graph suive le titre sans texte interposé.
@@ -467,7 +469,7 @@ data_sources_caption = (
 # baisse de niveau individuel — s'ajoute une défense plus dure/préparée et des rotations
 # resserrées. Visible uniquement en mode playoffs (voir stats_period plus haut).
 PLAYOFF_PACE_CAVEAT = (
-    " ⚠️ Écart de rythme de jeu saison régulière / playoffs : les playoffs se jouent à un rythme "
+    " Attention : écart de rythme de jeu saison régulière / playoffs : les playoffs se jouent à un rythme "
     "plus lent (jusqu'à -5.5 possessions/48min en 2023-24, écart quasi neutre dans les années "
     "90-2000 mais nettement plus marqué depuis) — un volume de stats par match plus faible en "
     "playoffs ne traduit donc pas forcément une baisse de niveau individuel, la défense plus "
@@ -482,7 +484,7 @@ PLAYOFF_PACE_CAVEAT = (
 # directement, même principe que les autres caveats de ce fichier) — même style que
 # PLAYOFF_PACE_CAVEAT ci-dessus, visible uniquement en mode playoffs.
 PLAYOFF_LOW_SAMPLE_THRESHOLD_CAVEAT = (
-    " ⚠️ Seuil \"échantillon court\" différent en playoffs : un joueur y est marqué à partir de "
+    " Attention : seuil \"échantillon court\" différent en playoffs : un joueur y est marqué à partir de "
     "moins de 4 matchs (contre 15 en saison régulière) — le nombre maximum de matchs réellement "
     "jouable en playoffs (~22-23 dans la pratique, 4 tours best-of-7) est trop faible pour garder "
     "le même seuil : appliqué tel quel, il marquait ~84% de tous les joueurs de playoffs, y "
@@ -493,7 +495,7 @@ PLAYOFF_LOW_SAMPLE_THRESHOLD_CAVEAT = (
 missing_salary = df["salary"].isna().all() if "salary" in df.columns else True
 if missing_salary and "salary_musd" in (x_key, y_key, color_key):
     st.warning(
-        "⚠️ Aucun salaire trouvé pour cette saison. Le dataset Kaggle n'est peut-être pas "
+        "Aucun salaire trouvé pour cette saison. Le dataset Kaggle n'est peut-être pas "
         "encore configuré (voir `README.md` — téléchargement manuel possible) ou ne couvre "
         "pas encore cette saison."
     )
@@ -511,7 +513,7 @@ n_priced = int(df["salary_musd"].notna().sum()) if "salary_musd" in df.columns e
 n_estimated_early = int(df.get("salary_is_estimated", pd.Series(dtype=bool)).sum())
 if n_priced and (n_estimated_early / n_priced) >= 0.9:
     st.warning(
-        f"⚠️ Les salaires de {season} ne sont pas encore disponibles dans la source de données "
+        f"Les salaires de {season} ne sont pas encore disponibles dans la source de données "
         "(dataset Kaggle pas encore mis à jour pour cette saison) — les valeurs affichées sont en "
         "réalité reprises en repli de la saison précédente disponible, **pas** les vrais chiffres "
         "de cette saison. Redeviendra correct automatiquement dès que le dataset sera mis à jour "
@@ -536,7 +538,7 @@ if plot_df.empty:
 symbol_key = None
 if "low_sample_size" in plot_df.columns:
     plot_df["Échantillon"] = plot_df["low_sample_size"].map(
-        {True: "⚠️ Échantillon court (peu de matchs)", False: "Échantillon normal"}
+        {True: "Échantillon court (peu de matchs)", False: "Échantillon normal"}
     )
     symbol_key = "Échantillon"
 
@@ -576,7 +578,7 @@ def _build_hover_text(row) -> str:
     awards = row.get("_awards")
     if awards:
         lines.append(
-            "🏅 Récompenses : " + ", ".join(
+            "Récompenses : " + ", ".join(
                 f"{AWARD_ICONS.get(a, '')} {AWARD_LABELS.get(a, a)}" for a in awards
             )
         )
@@ -594,7 +596,7 @@ def _build_hover_text(row) -> str:
         games_str = f"{games:.0f}" if pd.notna(games) else "?"
         minutes = row.get("minutes_per_game")
         minutes_str = f", {minutes:.1f} min/match" if pd.notna(minutes) else ""
-        lines.append(f"⚠️ Échantillon court : {games_str} matchs joués{minutes_str}")
+        lines.append(f"Échantillon court : {games_str} matchs joués{minutes_str}")
     elif pd.notna(games):
         lines.append(f"Matchs joués : {games:.0f}")
 
@@ -628,7 +630,7 @@ fig = px.scatter(
     color=None if color_key == "Aucune" else color_key,
     size=None if size_key == "Aucune" else size_key,
     symbol=symbol_key,
-    symbol_map={"Échantillon normal": "circle", "⚠️ Échantillon court (peu de matchs)": "diamond"} if symbol_key else None,
+    symbol_map={"Échantillon normal": "circle", "Échantillon court (peu de matchs)": "diamond"} if symbol_key else None,
     size_max=28,
     hover_name="player",
     custom_data=["_hover", "_border_color", "_border_width"],
@@ -735,7 +737,7 @@ if searched_player != "Aucun":
     highlight_row = plot_df[plot_df["player"] == searched_player]
     if highlight_row.empty:
         st.info(
-            f"🔍 **{searched_player}** ne correspond à aucun point affiché avec les filtres "
+            f"**{searched_player}** ne correspond à aucun point affiché avec les filtres "
             "actuels (minutes/matchs joués minimum, équipe...). Élargis les filtres pour le voir."
         )
     else:
@@ -769,12 +771,12 @@ if symbol_key:
         "d'une saison complète."
     )
 
-with st.expander("ℹ️ Sources des données et méthodologie", expanded=False):
+with st.expander("Sources des données et méthodologie", expanded=False):
     st.caption(data_sources_caption)
     if playoff_stats_caveat:
         st.caption(playoff_stats_caveat)
 
-with st.expander("📋 Voir les données détaillées"):
+with st.expander("Voir les données détaillées"):
     display_cols = ["player", "team"] + sorted(set([x_key, y_key] + ([color_key] if color_key in metrics else [])))
     if symbol_key:
         display_cols += [c for c in ("games_played", symbol_key) if c not in display_cols]
@@ -792,7 +794,7 @@ with st.expander("📋 Voir les données détaillées"):
 # indépendants de ceux du scatter plot, avec leurs propres widgets.
 # --------------------------------------------------------------------------
 st.markdown("---")
-st.subheader("🏅 Classement des équipes")
+st.subheader("Classement des équipes")
 
 if sport.get_team_ranking is None or not sport.team_ranking_metrics:
     st.info("Classement des équipes pas encore disponible pour ce sport.")
@@ -861,7 +863,7 @@ else:
                     x=ranked["team"],
                     y=ranked[ranking_metric_key],
                     marker_color=bar_colors,
-                    text=ranked["champion"].map(lambda c: "🏆" if c else ""),
+                    text=ranked["champion"].map(lambda c: "Champion" if c else ""),
                     textposition="outside",
                     hovertemplate=f"<b>%{{x}}</b><br>{ranking_meta.label} : %{{y:{ranking_meta.fmt}}}<extra></extra>",
                 )
@@ -875,6 +877,6 @@ else:
             )
             st.plotly_chart(fig_ranking, width='stretch')
             st.caption(
-                f"🏆 Équipe championne NBA de la saison {ranking_season} (résultat sportif réel, "
+                f"En doré : équipe championne NBA de la saison {ranking_season} (résultat sportif réel, "
                 "affiché quelle que soit la stat choisie ci-dessus)."
             )

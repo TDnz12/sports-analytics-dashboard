@@ -69,7 +69,7 @@ test("même carte : rien ne change", () => {
   assert.equal(M.addMessage("same", "Christian Braun", "Denver Nuggets"), "Christian Braun est déjà dans l'effectif des Denver Nuggets.");
 });
 
-test("⚠️ : joueur d'origine oui, joueur ajouté non (même transféré)", () => {
+test("badge « ? » : joueur d'origine oui, joueur ajouté non (même transféré)", () => {
   const miss = new Set(data.missing);
   const s0 = M.initialState(data);
   assert.equal(M.showWarning(s0, miss, 4), true);
@@ -87,7 +87,7 @@ test("interversion avec le voisin de droite, y compris P <-> 6e ; pas de droite 
   assert.equal(M.swapRight(s0, "DEN", 5), s0);
   const s3 = M.swapRight(s0, "LAL", 4); // P <-> 6e vide
   assert.deepEqual(s3.slots.LAL, [11, 12, 13, 14, null, 15]);
-  // le ⚠️ suit le joueur (lié au player_id, pas au slot)
+  // le badge « ? » suit le joueur (lié au player_id, pas au slot)
   const s4 = M.swapRight(s0, "DEN", 3);
   assert.equal(s4.slots.DEN[4], 4);
   assert.equal(M.showWarning(s4, new Set(data.missing), 4), true);
@@ -103,10 +103,10 @@ test("glisser-déposer : lâché sur sa propre place ou depuis une tuile vide ->
   assert.equal(empty.state, s0);
 });
 
-test("glisser-déposer dans une même carte : déplacement vers une tuile vide, échange, ⚠️ conservé", () => {
+test("glisser-déposer dans une même carte : déplacement vers une tuile vide, échange, badge « ? » conservé", () => {
   const miss = new Set(data.missing);
   const s0 = M.removePlayer(M.initialState(data), "DEN", 0);
-  const mv = M.moveOrSwap(s0, data, { team: "DEN", idx: 3 }, { team: "DEN", idx: 0 }); // Gordon (⚠️) -> M
+  const mv = M.moveOrSwap(s0, data, { team: "DEN", idx: 3 }, { team: "DEN", idx: 0 }); // Gordon (badge « ? ») -> M
   assert.equal(mv.kind, "move");
   assert.deepEqual(mv.state.slots.DEN, [4, 2, 3, null, 5, 6]);
   assert.deepEqual(mv.state.added, []);
@@ -121,7 +121,7 @@ test("glisser-déposer dans une même carte : déplacement vers une tuile vide, 
   assert.equal(M.isTeamModified(sw.state, data, "LAL"), false);
 });
 
-test("glisser-déposer vers une autre carte : transfert sur tuile vide, ⚠️ retiré", () => {
+test("glisser-déposer vers une autre carte : transfert sur tuile vide, badge « ? » retiré", () => {
   const miss = new Set(data.missing);
   const s0 = M.initialState(data);
   const r = M.moveOrSwap(s0, data, { team: "DEN", idx: 3 }, { team: "LAL", idx: 5 });
@@ -137,10 +137,10 @@ test("glisser-déposer vers une autre carte : transfert sur tuile vide, ⚠️ r
   assert.deepEqual(s0.added, []);
 });
 
-test("glisser-déposer sur un joueur d'une autre carte : échange, les deux perdent leur ⚠️, toast", () => {
+test("glisser-déposer sur un joueur d'une autre carte : échange, les deux perdent leur badge « ? », toast", () => {
   const miss = new Set(data.missing);
   const s0 = M.initialState(data);
-  const r = M.moveOrSwap(s0, data, { team: "DEN", idx: 3 }, { team: "LAL", idx: 2 }); // Gordon <-> James, ⚠️ tous deux
+  const r = M.moveOrSwap(s0, data, { team: "DEN", idx: 3 }, { team: "LAL", idx: 2 }); // Gordon <-> James, badge « ? » tous deux
   assert.equal(r.kind, "trade");
   assert.equal(r.pid, 4);
   assert.equal(r.other, 13);
@@ -180,9 +180,9 @@ test("défilement automatique : nul au centre, négatif en haut, positif en bas,
   assert.equal(M.autoScrollStep(900, 800), 18);
 });
 
-test("reset d'équipe : reprend le joueur transféré ailleurs, toast, ⚠️ rétabli", () => {
+test("reset d'équipe : reprend le joueur transféré ailleurs, toast, badge « ? » rétabli", () => {
   const s0 = M.initialState(data);
-  const t = M.addPlayer(s0, data, "LAL", 5, 4); // Gordon (⚠️) part aux Lakers
+  const t = M.addPlayer(s0, data, "LAL", 5, 4); // Gordon (badge « ? ») part aux Lakers
   const s1 = M.removePlayer(t.state, "DEN", 0);
   const r = M.resetTeam(s1, data, "DEN");
   assert.deepEqual(r.state.slots.DEN, [1, 2, 3, 4, 5, 6]);
@@ -194,7 +194,7 @@ test("reset d'équipe : reprend le joueur transféré ailleurs, toast, ⚠️ r�
     "Aaron Gordon revient aux Denver Nuggets (quitte les Los Angeles Lakers)");
 });
 
-test("reset après un échange entre cartes : chacun retrouve sa place d'origine, ⚠️ rétablis", () => {
+test("reset après un échange entre cartes : chacun retrouve sa place d'origine, badges « ? » rétablis", () => {
   const miss = new Set(data.missing);
   const t = M.moveOrSwap(M.initialState(data), data, { team: "DEN", idx: 4 }, { team: "LAL", idx: 2 }); // Jokić <-> James
   const r = M.resetTeam(t.state, data, "DEN");
@@ -223,9 +223,9 @@ test("reset : joueur venu d'ailleurs dont la place d'origine est prise, ou sans 
   assert.ok(!r.state.added.includes(12));
 });
 
-test("retour dans sa carte d'origine (glisser, échange, recherche) : retiré de added, ⚠️ rétabli", () => {
+test("retour dans sa carte d'origine (glisser, échange, recherche) : retiré de added, badge « ? » rétabli", () => {
   const miss = new Set(data.missing);
-  // glisser : Gordon (⚠️) part aux Lakers, puis revient à DEN sur une AUTRE place (échange avec Murray)
+  // glisser : Gordon (badge « ? ») part aux Lakers, puis revient à DEN sur une AUTRE place (échange avec Murray)
   const out = M.moveOrSwap(M.initialState(data), data, { team: "DEN", idx: 3 }, { team: "LAL", idx: 5 });
   assert.equal(M.showWarning(out.state, miss, 4), false);
   const back = M.moveOrSwap(out.state, data, { team: "LAL", idx: 5 }, { team: "DEN", idx: 0 });
