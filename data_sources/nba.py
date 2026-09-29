@@ -282,7 +282,8 @@ def get_teams_static() -> list[dict]:
 # calcul modifiée). Un cache disque écrit sous une version différente est
 # automatiquement ignoré et recalculé (voir base.read_cache/write_cache) —
 # évite qu'un ancien cache reste silencieusement incomplet après un déploiement.
-PROCESSED_SCHEMA_VERSION = 20  # v20: team = équipe du DERNIER match de saison régulière (game log, voir _with_final_game_team) au lieu de la dernière équipe d'inscription renvoyée par la NBA
+PROCESSED_SCHEMA_VERSION = 21  # v21: totaux de tirs fg3m/fg3a/ftm/fta_total (_fetch_shooting_totals), pour l'ajustement des axes 3PT%/LF% du radar
+# v20: team = équipe du DERNIER match de saison régulière (game log, voir _with_final_game_team) au lieu de la dernière équipe d'inscription renvoyée par la NBA
 # v19: retrait complet de la fonctionnalité salaire attendu/valeur ajoutée (expected_salary*, value_added* et toutes leurs variantes, is_rookie_scale, years_experience, impact_hors_scoring_zscore_poste) -- voir METHODOLOGY.md pour le pourquoi
 # v18: plafond CBA indépendant sur expected_salary/value_added -- retiré en v19, mention gardée pour l'historique
 # v15: ajout value_added_residual_std_pct_cap (bande d'incertitude de la trajectoire par joueur, Dashboard.py) -- colonne retirée en v19
@@ -307,6 +308,10 @@ NBA_API_RELIABILITY_SCHEMA_VERSION = 3  # v3: ne met plus en cache un résultat 
 
 # Cache brut pour _fetch_team_stats (bandeau classement des équipes de Dashboard.py).
 NBA_API_TEAM_STATS_SCHEMA_VERSION = 1
+
+# Cache brut pour _fetch_shooting_totals (voir plus bas).
+NBA_API_SHOOTING_SCHEMA_VERSION = 1
+SHOOTING_TOTAL_COLS = ["fg3m_total", "fg3a_total", "ftm_total", "fta_total"]
 
 # Cache brut pour _fetch_player_positions (voir plus bas).
 NBA_API_POSITIONS_SCHEMA_VERSION = 1
@@ -590,6 +595,37 @@ def _fetch_nba_api_stats_playoffs(season: str, force_refresh: bool = False) -> p
     ponctuel de stats.nba.com que le reste des appels nba_api de ce fichier (déjà couverte par
     _call_with_retries là où c'est critique)."""
     return _fetch_nba_api_stats(season, force_refresh=force_refresh, season_type="Playoffs", cache_suffix="_playoffs")
+
+
+def _fetch_shooting_totals(season: str, period: str = "regular", force_refresh: bool = False) -> pd.DataFrame:
+    """Totaux de tirs de la saison (tirs à 3 points et lancers francs, réussis et tentés) de
+    chaque joueur, pour `period` ("regular" ou "playoffs"). Mêmes données que
+    _fetch_nba_api_stats, mais en mode Totals : les tentatives y sont exactes, alors qu'en
+    PerGame elles sont arrondies au dixième par match. Utilisés par compute_radar_scores pour
+    ajuster 3PT%/LF% selon le volume de tirs. Cache séparé plutôt qu'ajouté au cache brut des
+    stats : évite de retélécharger Base et Advanced pour les 60 saisons."""
+    suffix = "" if period == "regular" else "_playoffs"
+    raw_cache_path = NBA_RAW_DIR / "nba_api" / f"shooting_{season}{suffix}.parquet"
+    cached = None if force_refresh else read_cache(raw_cache_path, schema_version=NBA_API_SHOOTING_SCHEMA_VERSION)
+    if cached is not None:
+        return cached
+
+    from nba_api.stats.endpoints import leaguedashplayerstats
+
+    raw = _call_with_retries(
+        lambda: leaguedashplayerstats.LeagueDashPlayerStats(
+            season=season, season_type_all_star="Regular Season" if period == "regular" else "Playoffs",
+            per_mode_detailed="Totals", measure_type_detailed_defense="Base",
+            timeout=NBA_API_TIMEOUT_SECONDS,
+        ).get_data_frames()[0],
+        description=f"_fetch_shooting_totals({season}, {period})",
+    )
+    result = raw.rename(columns={
+        "PLAYER_ID": "player_id", "FG3M": "fg3m_total", "FG3A": "fg3a_total",
+        "FTM": "ftm_total", "FTA": "fta_total",
+    })[["player_id"] + SHOOTING_TOTAL_COLS]
+    write_cache(result, raw_cache_path, schema_version=NBA_API_SHOOTING_SCHEMA_VERSION)
+    return result
 
 
 def _call_with_retries(fn, description: str, attempts: int = NETWORK_RETRY_ATTEMPTS,
@@ -1196,6 +1232,19 @@ def get_player_stats(season: str, force_refresh: bool = False, period: PlayoffMo
     # 2025-26 rendraient sinon la vue "Toutes les saisons" dominée par les saisons récentes).
     # .get(season) plutôt que [season] : NaN silencieux (pas de crash) si une saison hors de
     # NBA_SALARY_CAP_BY_SEASON était un jour demandée (ex. période dans KNOWN_SALARY_DATA_GAPS).
+    # Totaux de tirs de la période affichée (ajustement 3PT%/LF% du radar), ajoutés à la fin pour
+    # ne pas toucher à _substitute_playoffs_only_stats. En cas d'échec, colonnes vides et cache
+    # traité non écrit (même principe que la fiabilité plus bas), pour réessayer au prochain
+    # chargement.
+    shooting_complete = False
+    try:
+        working = working.merge(_fetch_shooting_totals(season, period, force_refresh), on="player_id", how="left")
+        shooting_complete = True
+    except Exception as exc:
+        logger.warning("Totaux de tirs indisponibles pour %s (%s) : %s", season, period, exc)
+        for col in SHOOTING_TOTAL_COLS:
+            working[col] = np.nan
+
     season_cap = NBA_SALARY_CAP_BY_SEASON.get(season)
     working["salary_pct_cap"] = working["salary"] / season_cap if season_cap else np.nan
 
@@ -1215,11 +1264,11 @@ def get_player_stats(season: str, force_refresh: bool = False, period: PlayoffMo
     else:
         working["reliability_pct"] = np.nan
 
-    if reliability_complete and final_team_complete:
+    if reliability_complete and final_team_complete and shooting_complete:
         write_cache(working, processed_path, schema_version=PROCESSED_SCHEMA_VERSION)
     else:
         logger.warning(
-            "Cache traité %s non écrit : fiabilité ou équipe du dernier match incomplète, "
+            "Cache traité %s non écrit : fiabilité, équipe du dernier match ou totaux de tirs incomplets, "
             "recalcul au prochain chargement.",
             processed_path.name,
         )
@@ -1544,13 +1593,38 @@ RADAR_TURNOVERS_NOTE = (
     "en perte de balle (TOV% estimé à partir de l'USG%). Rapportée au volume, elle ne pénalise "
     "pas les porteurs de balle principaux. Axe inversé : moins de pertes = plus loin du centre."
 )
-# Les tentatives (FG3A/FTA) ne sont pas dans les caches : impossible pour l'instant de fixer un
-# seuil ou de lisser, d'où ce simple avertissement.
-RADAR_SHOOTING_VOLUME_CAVEAT = (
-    " ⚠️ \"Tir extérieur (3PT%)\" et \"Lancers francs (LF%)\" ne tiennent pas compte du nombre de "
-    "tentatives : un joueur qui tire très peu peut afficher un pourcentage extrême (100 % sur "
-    "deux lancers francs, 0 % sur un seul tir à 3 points) et se retrouver au bord du radar."
+RADAR_SHOOTING_PADDING_NOTE = (
+    " ℹ️ \"Tir extérieur (3PT%)\" et \"Lancers francs (LF%)\" : la position sur le radar utilise un "
+    "pourcentage ajusté, qui ajoute au joueur 242 tirs à 3 points (156 lancers francs) fictifs "
+    "réussis à la moyenne de son poste, sur la saison et le type de stats choisis. Un joueur qui "
+    "tire peu reste donc proche de la moyenne de son poste (2/2 aux lancers francs ne donne plus "
+    "100), un gros volume garde son vrai niveau. Sous 1 tentative à 3 points (0,5 lancer franc) "
+    "par match, l'axe reste vide : le pourcentage ajusté ne serait presque que la moyenne du poste "
+    "et ferait passer un non-tireur pour un tireur moyen. Le tableau et le survol affichent le "
+    "vrai pourcentage et le nombre de tentatives ; dans le tableau, \"NC\" (non classé) remplace "
+    "alors le score."
 )
+
+# Régression vers la moyenne ("padding", Kostya Medvedovsky, "NBA Stabilization Rates and the
+# Padding Approach", kmedved.com, 2020) : pourcentage ajusté = (réussis + P x moyenne du poste) /
+# (tentatives + P). Moyenne du POSTE (Intérieur / Ailier / Extérieur), pas de la ligue, pour
+# rester cohérent avec le z-score par poste : un intérieur qui tire très peu est ramené vers le
+# niveau des intérieurs, pas vers celui de toute la ligue.
+#
+# Volume minimum par match (sur les matchs de la période affichée, donc valable aussi en playoffs)
+# pour que le padding s'applique : en dessous, le pourcentage ajusté serait presque entièrement la
+# moyenne du poste et ferait passer un non-tireur pour un tireur moyen (Gobert 2020-21 : 0/4 à 3
+# points, ramené à 34,5 %, indice 45). L'axe est alors vide, comme sans aucune tentative, et le
+# joueur sort de la population de référence de cet axe. 0,5 pour les lancers francs : à 1, l'axe
+# disparaissait pour de bons tireurs qui obtiennent peu de fautes (Tyus Jones 2024-25 : 51/57,
+# 0,70 tentative par match ; 38 % des joueurs de référence 2024-25 sous le seuil, contre 15 %).
+MIN_FG3A_PER_GAME = 1.0
+MIN_FTA_PER_GAME = 0.5
+
+SHOOTING_PADDING = {  # {colonne ajustée : (réussis, tentés, P, tentatives minimum par match)}
+    "fg3_pct_adj": ("fg3m_total", "fg3a_total", 242, MIN_FG3A_PER_GAME),
+    "ft_pct_adj": ("ftm_total", "fta_total", 156, MIN_FTA_PER_GAME),
+}
 
 # TOV% estimé sans réseau : le TOV% exact (pertes / (FGA + 0,44 FTA + pertes)) n'est pas dans le
 # cache nba_api, mais USG% x minutes est proportionnel au nombre d'actions terminées par le
@@ -1590,9 +1664,12 @@ RADAR_AXES: list[dict] = [
         "help": "Player Impact Estimate : part des actions positives du match attribuable au joueur.",
     },
     {
-        "key": "tir_exterieur", "label": "Tir extérieur (3PT%)", "stat_col": "fg3_pct", "fmt": "{:.1%}",
-        "caveats": [RADAR_SHOOTING_VOLUME_CAVEAT],
-        "help": "Réussite à 3 points, sans tenir compte du nombre de tentatives.",
+        "key": "tir_exterieur", "label": "Tir extérieur (3PT%)", "stat_col": "fg3_pct",
+        "score_col": "fg3_pct_adj", "attempts_col": "fg3a_total", "fmt": "{:.1%}",
+        "caveats": [RADAR_SHOOTING_PADDING_NOTE],
+        "help": "Réussite à 3 points. Le score utilise un pourcentage ajusté vers la moyenne du "
+                "poste selon le nombre de tentatives ; axe vide sous 1 tentative par match. "
+                "NC : non classé, volume de tirs sous le seuil.",
     },
     {
         "key": "protection_ballon", "label": "Protection du ballon", "stat_col": "tov_pct_est",
@@ -1601,8 +1678,11 @@ RADAR_AXES: list[dict] = [
                 "Plus c'est bas, mieux c'est (axe inversé).",
     },
     {
-        "key": "lancers_francs", "label": "Lancers francs (LF%)", "stat_col": "ft_pct", "fmt": "{:.1%}",
-        "help": "Réussite aux lancers francs, sans tenir compte du nombre de tentatives.",
+        "key": "lancers_francs", "label": "Lancers francs (LF%)", "stat_col": "ft_pct",
+        "score_col": "ft_pct_adj", "attempts_col": "fta_total", "fmt": "{:.1%}",
+        "help": "Réussite aux lancers francs. Le score utilise un pourcentage ajusté vers la "
+                "moyenne du poste selon le nombre de tentatives ; axe vide sous 0,5 tentative par "
+                "match. NC : non classé, volume de tirs sous le seuil.",
     },
 ]
 
@@ -1663,12 +1743,28 @@ def compute_radar_scores(df: pd.DataFrame, period: PlayoffMode = "regular") -> p
     Ajoute aussi `tov_pct_est` (voir TOV_PCT_ESTIMATE_SCALE), calculé ici plutôt que stocké dans
     les caches : il ne dépend que de colonnes déjà présentes, donc aucun cache à recalculer. NaN
     quand USG% x minutes vaut 0 (quelques très petits temps de jeu en playoffs), plutôt qu'une
-    valeur infinie."""
+    valeur infinie.
+
+    Ajoute aussi les pourcentages ajustés de SHOOTING_PADDING (fg3_pct_adj, ft_pct_adj), utilisés
+    à la place du vrai pourcentage pour le z-score/percentile des axes qui ont `score_col`. La
+    moyenne du poste est calculée sur `df` lui-même (une saison, un type de stats) : total des
+    réussis / total des tentatives des joueurs de ce poste (tous, y compris sous le seuil
+    ci-dessous : leur poids y est négligeable). NaN sous le volume minimum par match de
+    SHOOTING_PADDING (MIN_FG3A_PER_GAME, MIN_FTA_PER_GAME), donc aussi sans aucune tentative, ou
+    sans poste : axe vide plutôt qu'un pourcentage presque inventé."""
     min_games = MIN_GAMES_FOR_FIT_PLAYOFFS if period == "playoffs" else MIN_GAMES_FOR_FIT
     result = df.copy()
     if {"turnovers_per_game", "usg_pct", "minutes_per_game"} <= set(result.columns):
         plays = result["usg_pct"] * result["minutes_per_game"]
         result["tov_pct_est"] = (TOV_PCT_ESTIMATE_SCALE * result["turnovers_per_game"] / plays).where(plays > 0)
+    if "position_group" in result.columns:
+        for adj_col, (made_col, att_col, padding, min_per_game) in SHOOTING_PADDING.items():
+            if {made_col, att_col} <= set(result.columns):
+                totals = result.groupby("position_group")[[made_col, att_col]].sum()
+                position_pct = result["position_group"].map(totals[made_col] / totals[att_col])
+                adjusted = (result[made_col] + padding * position_pct) / (result[att_col] + padding)
+                per_game = result[att_col] / result["games_played"].where(result["games_played"] > 0)
+                result[adj_col] = adjusted.where((result[att_col] > 0) & (per_game >= min_per_game))
 
     if "position_group" not in result.columns:
         for axis in RADAR_AXES:
@@ -1680,7 +1776,7 @@ def compute_radar_scores(df: pd.DataFrame, period: PlayoffMode = "regular") -> p
     stat_mask = result["games_played"].fillna(0) >= min_games
     temp_cols = []
     for axis in RADAR_AXES:
-        col = axis["stat_col"]
+        col = axis.get("score_col", axis["stat_col"])
         if col not in result.columns:
             result[f"radar_{axis['key']}_z"] = np.nan
             result[f"radar_{axis['key']}_score"] = np.nan

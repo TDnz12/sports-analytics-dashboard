@@ -28,8 +28,8 @@ def new(state=None):
     return at.run()
 
 
-def traces(at):  # tracés du radar (figure Plotly sérialisée)
-    return spec(at)["data"]
+def traces(at, meta="points"):  # tracés du radar d'un rôle donné (meta), un par joueur au plus
+    return [t for t in spec(at)["data"] if t.get("meta") == meta]
 
 
 def cards(at):  # noms des cartes d'en-tête, avec la couleur de leur bordure
@@ -50,7 +50,7 @@ at = new()
 assert not at.exception, at.exception
 ms = at.multiselect(key="radar_players")
 assert at.selectbox(key="radar_season").value == "2024-25" and len(ms.value) == 1
-assert len(traces(at)) == 1 and len(cards(at)) == 1
+assert len(traces(at)) == 1 and len(traces(at, "legende")) == 1 and len(cards(at)) == 1
 ok("ouverture : un joueur, une carte, un tracé")
 
 # 2. Quatre joueurs : couleurs distinctes, remplissage transparent, valeurs au survol seulement
@@ -58,10 +58,16 @@ ms.set_value(FOUR).run()
 assert not at.exception, at.exception
 data = traces(at)
 assert [t["name"] for t in data] == FOUR
-colors = [t["line"]["color"] for t in data]
+colors = [t["marker"]["color"] for t in data]
 assert len(set(colors)) == 4 and [c for _, c in cards(at)] == colors and [n for n, _ in cards(at)] == FOUR
-assert all(t["fillcolor"].endswith(",0.1)") for t in data)
+assert [t["line"]["color"] for t in traces(at, "contour")] == colors
+assert all(t["fillcolor"].endswith(",0.1)") for t in traces(at, "remplissage"))
 assert all("text" not in t["mode"] for t in data)
+# Légende : une entrée par joueur (trait + point + remplissage, comme avant), aucune autre
+legend = [t for t in spec(at)["data"] if t.get("showlegend")]
+assert [t["meta"] for t in legend] == ["legende"] * 4 and [t["name"] for t in legend] == FOUR
+assert all(t["mode"] == "lines+markers" and t["fill"] == "toself" for t in legend)
+assert all(t["legendgroup"] for t in spec(at)["data"])
 assert all("Protection du ballon" in t["theta"] for t in data)
 assert "possessions utilisées" in data[0]["customdata"][data[0]["theta"].index("Protection du ballon")][1]
 assert list(recap(at).index) == FOUR
@@ -74,11 +80,13 @@ ok("échelle radiale fixée de 0 à 100")
 # 3. Tableau récap : pourcentages et TOV% lisibles
 row = recap(at).loc["Shai Gilgeous-Alexander"]
 assert row["Efficacité (TS%)"].startswith("63.") and "%" in row["Efficacité (TS%)"], row["Efficacité (TS%)"]
-assert row["Lancers francs (LF%)"].startswith("89.") and "%" in row["Lancers francs (LF%)"], row["Lancers francs (LF%)"]
+assert row["Lancers francs (LF%)"].startswith("89.") and "% (669 tent.)" in row["Lancers francs (LF%)"], \
+    row["Lancers francs (LF%)"]
+assert "% (435 tent.)" in row["Tir extérieur (3PT%)"], row["Tir extérieur (3PT%)"]
 assert row["Protection du ballon"].startswith("8.") and "%" in row["Protection du ballon"], row["Protection du ballon"]
 assert row["Impact global (PIE)"].startswith("19.9%"), row["Impact global (PIE)"]
 assert row["Scoring"].startswith("32.7"), row["Scoring"]
-ok("tableau récap : pourcentages en % à une décimale (PIE compris), TOV% estimé, points par match inchangés")
+ok("tableau récap : pourcentages en % à une décimale (PIE compris), tentatives 3PT/LF, TOV% estimé")
 
 # 3 bis. Survol : même valeur réelle que le tableau, pour chaque axe et chaque joueur
 for t in data:
@@ -133,8 +141,69 @@ ok("présélection du Dashboard : saison et joueur repris")
 at = new({"radar_players": FOUR})
 next(s for s in at.selectbox if s.label == "Statistiques utilisées").set_value("Playoffs uniquement").run()
 assert not at.exception, at.exception
-assert set(at.multiselect(key="radar_players").value) <= set(FOUR) and len(traces(at)) >= 1
+assert set(at.multiselect(key="radar_players").value) <= set(FOUR) and len(traces(at, "legende")) >= 1
 ok("playoffs : joueurs non qualifiés retirés, radar affiché")
+
+# 10. Axe sans tentative (Rudy Gobert, 0 tir à 3 points en 2024-25) : point absent du tracé (pas
+# un 0 au centre), "0 tent.  ·  NC" dans le tableau, ordre des axes conservé même s'il est le premier tracé
+at = new({"radar_players": ["Rudy Gobert", "Stephen Curry"]})
+assert not at.exception, at.exception
+gobert, curry = traces(at)
+labels = [a["label"] for a in nba.RADAR_AXES]
+three = "Tir extérieur (3PT%)"
+assert three not in gobert["theta"] and 0 not in gobert["r"], gobert["theta"]
+assert len(gobert["theta"]) == len(labels) - 1 and curry["theta"] == labels
+assert spec(at)["layout"]["polar"]["angularaxis"]["categoryarray"] == labels
+# Segment qui enjambe l'axe vide : en tirets, entre les deux axes voisins ; le contour plein ne
+# l'enjambe pas. Curry (aucun axe vide) n'a ni tirets ni cercle creux.
+(dashes,) = traces(at, "tirets")
+assert dashes["name"] == "Rudy Gobert" and dashes["line"]["dash"] == "dash"
+neighbours = {"Impact global (PIE)", "Protection du ballon"}
+assert set(dashes["theta"][:2]) == neighbours, dashes["theta"]
+(solid_g, solid_c) = traces(at, "contour")
+# Le contour est une suite de segments (début, fin, coupure None) : aucun ne relie les voisins.
+segments = [set(solid_g["theta"][k:k + 2]) for k in range(0, len(solid_g["theta"]), 3)]
+assert three not in solid_g["theta"] and neighbours not in segments, segments
+# Cercle creux sans texte sur l'axe vide, survol "aucune tentative"
+(circle,) = traces(at, "sans_tentative")
+assert circle["name"] == "Rudy Gobert" and circle["theta"] == [three] and circle["mode"] == "markers"
+assert circle["marker"]["symbol"] == "circle-open" and circle["customdata"] == ["aucune tentative"]
+assert recap(at).loc["Rudy Gobert", three] == "0 tent.  ·  NC\u2007\u00A0", recap(at).loc["Rudy Gobert", three]
+ok("axe sans tentative : pas de point, segment en tirets, cercle creux « aucune tentative », « 0 tent.  ·  NC » au tableau")
+
+# 11. Deux joueurs sans tentative sur le même axe (Gobert et Simmons) : cercles creux décalés
+# (pas de chevauchement) ; le segment en tirets de Simmons part du centre (Protection du ballon à 0)
+at = new({"radar_players": ["Rudy Gobert", "Ben Simmons", "Stephen Curry", "Nikola Jokić"]})
+assert not at.exception, at.exception
+circles = traces(at, "sans_tentative")
+assert [c["name"] for c in circles] == ["Rudy Gobert", "Ben Simmons"]
+assert circles[1]["r"][0] - circles[0]["r"][0] >= 6, [c["r"] for c in circles]
+simmons_dash = next(t for t in traces(at, "tirets") if t["name"] == "Ben Simmons")
+assert 0 in simmons_dash["r"][:2] and simmons_dash["line"]["width"] == 2, simmons_dash["r"]
+ok("4 joueurs : cercles creux décalés, tirets de Simmons partant du centre, aussi épais que le trait")
+
+# 12. Volume trop faible (2020-21) : Gobert 0/4 et Simmons 3/10 à 3 points, sous 1 tentative par
+# match. Axe vide comme sans tentative, survol avec le nombre de tentatives, vrai % au tableau.
+at = new({"radar_season": "2020-21", "radar_players": ["Rudy Gobert", "Ben Simmons", "Nikola Jokić", "Stephen Curry"]})
+assert not at.exception, at.exception
+circles = traces(at, "sans_tentative")
+assert [(c["name"], c["theta"], c["customdata"]) for c in circles] == [
+    ("Rudy Gobert", [three], ["volume trop faible (4 tentatives en 71 matchs)"]),
+    ("Ben Simmons", [three], ["volume trop faible (10 tentatives en 58 matchs)"]),
+], circles
+assert [t["name"] for t in traces(at, "tirets")] == ["Rudy Gobert", "Ben Simmons"]
+assert all(three in t["theta"] for t in traces(at) if t["name"] in ("Nikola Jokić", "Stephen Curry"))
+table = recap(at)
+assert table.loc["Rudy Gobert", three] == "0.0% (4 tent.)  ·  NC\u2007\u00A0", table.loc["Rudy Gobert", three]
+assert table.loc["Ben Simmons", three] == "30.0% (10 tent.)  ·  NC\u2007\u00A0", table.loc["Ben Simmons", three]
+assert table.loc["Rudy Gobert", "Lancers francs (LF%)"].startswith("62.3% (374 tent.)  ·  ")
+assert "NC" not in table.loc["Rudy Gobert", "Lancers francs (LF%)"]
+cfg = json.loads(at.dataframe[0].proto.columns)
+for label in (three, "Lancers francs (LF%)"):
+    assert "NC : non classé, volume de tirs sous le seuil." in cfg[label]["help"], cfg[label]["help"]
+assert all("NC" not in cfg[a["label"]]["help"] for a in nba.RADAR_AXES if "attempts_col" not in a)
+assert any("« NC » (non classé)" in c.value or '"NC" (non classé)' in c.value for c in at.caption)
+ok("volume trop faible (2020-21) : axe vide, survol avec les tentatives, « 0.0% (4 tent.)  ·  NC » au tableau, NC expliqué")
 
 assert writes == [], writes
 ok("aucune écriture disque")

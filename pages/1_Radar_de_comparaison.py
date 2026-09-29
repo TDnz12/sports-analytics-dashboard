@@ -248,6 +248,11 @@ def _fill_color(hex_color: str) -> str:
 # 69) verraient sinon leurs deux labels se chevaucher exactement au même point. Au-delà de 2
 # joueurs, plus aucun décalage ne suffit : les valeurs restent lisibles au survol.
 MAX_PLAYERS_WITH_TEXT = 2
+# Position radiale des cercles creux "aucune tentative" : près du centre, un cran de plus par
+# joueur (4, 10, 16, 22), assez espacés pour ne pas se chevaucher quand plusieurs joueurs n'ont
+# aucune tentative sur le même axe.
+NO_ATTEMPT_R_START = 4
+NO_ATTEMPT_R_STEP = 6
 PLAYER_TEXT_POSITIONS = ["top center", "bottom center"]
 
 
@@ -290,14 +295,33 @@ if players:
 RECAP_CELL_END_MARGIN = "\u2007\u00A0"
 
 
-def _format_raw(axis: dict, value) -> str:
+def _format_raw(axis: dict, row: pd.Series) -> str:
     """Valeur réelle d'un axe au format de RADAR_AXES["fmt"] (les pourcentages nba_api sont des
-    fractions, 0.152 pour 15,2 %), "—" si manquante. Même texte au survol et dans le tableau."""
-    return "—" if pd.isna(value) else axis.get("fmt", "{:.1f}").format(value)
+    fractions, 0.152 pour 15,2 %), suivie du nombre de tentatives entre parenthèses pour les axes
+    de tir ("88.7% (669 tent.)"), ou seulement "0 tent." sans aucune tentative (le pourcentage
+    n'a alors pas de sens). "—" si manquante. Même texte au survol et dans le tableau."""
+    value = row.get(axis["stat_col"])
+    attempts = row.get(axis["attempts_col"]) if "attempts_col" in axis else None
+    if attempts is not None and not pd.isna(attempts) and attempts == 0:
+        return "0 tent."
+    if pd.isna(value):
+        return "—"
+    text = axis.get("fmt", "{:.1f}").format(value)
+    return text if attempts is None or pd.isna(attempts) else f"{text} ({attempts:.0f} tent.)"
+
+
+def _empty_axis_reason(axis: dict, row: pd.Series) -> str:
+    """Raison affichée au survol d'un axe vide : aucune tentative, ou volume sous le minimum par
+    match (nba.MIN_FG3A_PER_GAME / MIN_FTA_PER_GAME) pour un axe de tir."""
+    attempts = row.get(axis["attempts_col"]) if "attempts_col" in axis else None
+    if attempts is None or pd.isna(attempts):
+        return "aucune donnée"
+    if attempts == 0:
+        return "aucune tentative"
+    return f"volume trop faible ({attempts:.0f} tentatives en {row.get('games_played'):.0f} matchs)"
 
 
 theta_labels = [a["label"] for a in axes]
-theta_closed = theta_labels + [theta_labels[0]]
 # Description de chaque axe (clé "help" de RADAR_AXES) ajoutée au survol de ses points, coupée en
 # lignes courtes : Plotly ne revient pas à la ligne tout seul dans une infobulle.
 axis_help = ["<br>".join(textwrap.wrap(a.get("help", ""), 60)) for a in axes]
@@ -312,40 +336,91 @@ for i, player_name in enumerate(players):
         st.info(f"🔍 **{player_name}** ne correspond à aucune donnée pour {season} ({stats_period_label}).")
         continue
     scores = [row.get(f"radar_{a['key']}{score_suffix}") for a in axes]
-    scores_filled = [0.0 if pd.isna(s) else float(s) for s in scores]
-    # Valeur affichée directement à côté de chaque point (pas seulement au survol) : "" pour un
-    # axe réellement manquant (NaN, distingué de scores_filled qui met 0.0 par défaut juste pour
-    # dessiner le contour) -- sinon un axe sans donnée afficherait un trompeur "0".
-    point_labels = ["" if pd.isna(s) else f"{s:.0f}" for s in scores]
+    # Axe sans valeur (ex. aucune tentative à 3 points) : point retiré du tracé plutôt que placé au
+    # centre, où il se lirait comme un score de 0 ; le polygone relie les deux axes voisins par un
+    # segment en tirets, et un cercle creux marque l'axe vide (voir plus bas). L'ordre des axes
+    # reste fixé par categoryarray (voir angularaxis plus bas), même si le premier tracé n'a pas
+    # tous les axes.
+    kept = [k for k, s in enumerate(scores) if not pd.isna(s)]
+    kept_closed = kept + kept[:1]
+    # Valeur affichée directement à côté de chaque point, pas seulement au survol.
+    point_labels = [f"{scores[k]:.0f}" for k in kept]
     # Valeur réelle de chaque axe, au même format que le tableau récap (PIE en %, TOV% estimé...).
-    raw_labels = [_format_raw(a, row.get(a["stat_col"])) for a in axes]
+    raw_labels = [_format_raw(a, row) for a in axes]
     hover_data = [[raw, help_txt] for raw, help_txt in zip(raw_labels, axis_help)]
     line_color = PLAYER_COLORS[i]
+    group = f"joueur{i}"
+    common = dict(legendgroup=group, showlegend=False, name=player_name)
+    # Un joueur = plusieurs tracés regroupés (legendgroup : un clic sur la légende les masque tous),
+    # repérés par `meta` pour les tests. Remplissage seul, sans contour : même polygone que les
+    # points présents.
     fig.add_trace(go.Scatterpolar(
-        r=scores_filled + [scores_filled[0]],
-        theta=theta_closed,
-        fill="toself",
-        mode="lines+markers+text" if show_text else "lines+markers",
-        # Pas de valeur sur le point qui referme le tracé : il se superpose au premier, et la valeur
-        # écrite deux fois au même endroit apparaissait plus grasse que les autres.
-        text=point_labels + [""],
+        r=[float(scores[k]) for k in kept_closed], theta=[theta_labels[k] for k in kept_closed],
+        fill="toself", fillcolor=_fill_color(line_color), mode="lines", line=dict(width=0),
+        hoverinfo="skip", meta="remplissage", **common,
+    ))
+    # Contour : trait plein entre deux axes voisins ; le segment qui enjambe un axe vide est en
+    # tirets, pour ne pas se lire comme une vraie valeur sur cet axe. Tirets aussi épais que le
+    # trait plein : plus fins, ils disparaissaient quand ils partent du centre (score de 0 sur
+    # l'axe voisin, ex. Ben Simmons en Protection du ballon 2024-25).
+    solid_r, solid_t, gap_r, gap_t = [], [], [], []
+    for a, b in zip(kept_closed, kept_closed[1:]):
+        rr, tt = (solid_r, solid_t) if (b - a) % len(axes) == 1 else (gap_r, gap_t)
+        rr += [float(scores[a]), float(scores[b]), None]
+        tt += [theta_labels[a], theta_labels[b], theta_labels[b]]
+    fig.add_trace(go.Scatterpolar(
+        r=solid_r, theta=solid_t, mode="lines", line=dict(color=line_color, width=2),
+        connectgaps=False, hoverinfo="skip", meta="contour", **common,
+    ))
+    if gap_r:
+        fig.add_trace(go.Scatterpolar(
+            r=gap_r, theta=gap_t, mode="lines", line=dict(color=line_color, width=2, dash="dash"),
+            connectgaps=False, hoverinfo="skip", meta="tirets", **common,
+        ))
+    # Points, valeurs écrites à côté et survol.
+    fig.add_trace(go.Scatterpolar(
+        r=[float(scores[k]) for k in kept], theta=[theta_labels[k] for k in kept],
+        mode="markers+text" if show_text else "markers", text=point_labels,
         textposition=PLAYER_TEXT_POSITIONS[i % len(PLAYER_TEXT_POSITIONS)],
-        textfont=dict(color=line_color, size=10),
-        customdata=hover_data + [hover_data[0]],
-        name=player_name,
-        line=dict(color=line_color, width=2),
-        marker=dict(size=5, color=line_color),
-        fillcolor=_fill_color(line_color),
+        textfont=dict(color=line_color, size=10), customdata=[hover_data[k] for k in kept],
+        marker=dict(size=5, color=line_color), meta="points", **common,
         hovertemplate=(
             "<b>%{theta} : %{r:.0f}" + score_unit + "</b><br>Valeur réelle : %{customdata[0]}"
             "<br>%{customdata[1]}<extra>" + player_name + "</extra>"
         ),
     ))
+    # Axe vide : petit cercle creux près du centre, sans texte, décalé de NO_ATTEMPT_R_STEP par
+    # joueur pour que les cercles ne se chevauchent pas. Le survol en donne la raison.
+    missing = [k for k in range(len(axes)) if k not in kept]
+    if missing:
+        fig.add_trace(go.Scatterpolar(
+            r=[NO_ATTEMPT_R_START + NO_ATTEMPT_R_STEP * i] * len(missing),
+            theta=[theta_labels[k] for k in missing], mode="markers",
+            marker=dict(symbol="circle-open", size=8, color=line_color, line=dict(width=1.5)),
+            customdata=[_empty_axis_reason(axes[k], row) for k in missing],
+            hovertemplate="<b>%{theta}</b> : %{customdata}<extra>" + player_name + "</extra>",
+            meta="sans_tentative", **common,
+        ))
+    # Entrée de légende seule (aucune donnée tracée) : garde l'icône d'avant, trait + point +
+    # remplissage, que les tracés séparés ci-dessus n'ont plus individuellement.
+    fig.add_trace(go.Scatterpolar(
+        r=[None], theta=[theta_labels[0]], mode="lines+markers", fill="toself",
+        fillcolor=_fill_color(line_color), line=dict(color=line_color, width=2),
+        marker=dict(size=5, color=line_color), legendgroup=group, showlegend=True,
+        name=player_name, hoverinfo="skip", meta="legende",
+    ))
     recap_row = {"Joueur": player_name}
     for a, raw, score in zip(axes, raw_labels, scores):
-        recap_row[a["label"]] = (
-            f"{raw}  ·  {score:.0f}{score_unit}" if raw != "—" and pd.notna(score) else "—"
-        ) + RECAP_CELL_END_MARGIN
+        # Axe de tir vide (zéro tentative ou volume sous le seuil) : valeur réelle suivie de "NC"
+        # (non classé) à la place du score, ex. "0.0% (4 tent.)  ·  NC" ou "0 tent.  ·  NC".
+        # "—" reste réservé à une donnée réellement absente.
+        if raw == "—":
+            cell = "—"
+        elif pd.notna(score):
+            cell = f"{raw}  ·  {score:.0f}{score_unit}"
+        else:
+            cell = f"{raw}  ·  " + ("NC" if "attempts_col" in a else "—")
+        recap_row[a["label"]] = cell + RECAP_CELL_END_MARGIN
     recap_rows.append(recap_row)
 
 if not fig.data:
@@ -387,7 +462,7 @@ fig.update_layout(
             gridcolor=POLAR_AXIS_COLOR, linecolor=POLAR_AXIS_COLOR, tickfont=dict(color=POLAR_AXIS_COLOR, size=9),
         ),
         angularaxis=dict(
-            direction="clockwise",
+            direction="clockwise", categoryorder="array", categoryarray=theta_labels,
             # Graduations invisibles mais longues : c'est le seul réglage Plotly qui éloigne les
             # libellés d'axes du cercle extérieur, pour laisser la place aux valeurs des points
             # à 100 (voir le commentaire au-dessus de POLAR_AXIS_COLOR).

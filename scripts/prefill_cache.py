@@ -1,7 +1,9 @@
 """Pré-remplit le cache disque pour TOUTES les saisons couvertes par le dashboard (nba.SEASONS,
 1996-97 -> 2025-26) : data_cache/processed/nba/<saison>.parquet et <saison>_playoffs.parquet
 (Dashboard, Radar), les caches de la grille Effectifs game_log_<saison> et mercato_<saison>, et
-team_stats_<saison>_regular/_playoffs (classement des équipes du Dashboard). Streamlit Cloud ne
+team_stats_<saison>_regular/_playoffs (classement des équipes du Dashboard), et
+shooting_<saison>[_playoffs] (totaux de tirs, ajustement 3PT%/LF% du radar, téléchargés au
+passage par get_player_stats). Streamlit Cloud ne
 joint pas stats.nba.com : en ligne, un cache absent se traduit par ~30s d'attente puis une erreur.
 
 Usage :
@@ -34,7 +36,8 @@ def expected_caches(season: str) -> list[Path]:
     raw, proc = nba.NBA_RAW_DIR / "nba_api", nba.NBA_PROCESSED_DIR
     return [proc / f"{season}.parquet", proc / f"{season}_playoffs.parquet",
             proc / f"mercato_{season}.parquet",
-            raw / f"team_stats_{season}_regular.parquet", raw / f"team_stats_{season}_playoffs.parquet"]
+            raw / f"team_stats_{season}_regular.parquet", raw / f"team_stats_{season}_playoffs.parquet",
+            raw / f"shooting_{season}.parquet", raw / f"shooting_{season}_playoffs.parquet"]
 
 
 def main() -> None:

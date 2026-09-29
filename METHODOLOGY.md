@@ -96,11 +96,46 @@ valeur peut être décalée d'environ 10 %. Le ratio passes décisives / pertes 
 mélange création et protection du ballon (Wembanyama au 28e centile) et devient instable quand
 les pertes sont rares.
 
+**Tir extérieur et lancers francs.** Un pourcentage brut classe en tête les joueurs qui tirent
+très peu (Matt Ryan à 100 % aux lancers francs en 2024-25, sur 2 tentatives). La position sur le
+radar utilise donc un pourcentage ajusté par régression vers la moyenne ("padding", Kostya
+Medvedovsky, "NBA Stabilization Rates and the Padding Approach", kmedved.com, 2020) :
+`(réussis + P × moyenne du poste) / (tentatives + P)`, avec P = 242 pour les tirs à 3 points et
+P = 156 pour les lancers francs. La moyenne est celle du poste du joueur (Intérieur / Ailier /
+Extérieur), sur la saison et le type de stats choisis (total des réussis / total des tentatives),
+pour rester cohérente avec le z-score par poste. Un faible volume est ainsi ramené vers la
+moyenne de son poste (un 2/2 aux lancers francs donne presque exactement cette moyenne), un gros
+volume garde son vrai niveau. Le z-score et le centile sont calculés sur ce pourcentage ajusté ;
+le tableau et le survol affichent le vrai pourcentage et le nombre de tentatives. Les tentatives
+exactes viennent de `LeagueDashPlayerStats` en mode Totals (`_fetch_shooting_totals`, caches
+`shooting_<saison>[_playoffs]`).
+
+**Volume minimum.** Avec très peu de tentatives, le pourcentage ajusté n'est presque que la moyenne
+du poste et fait passer un non-tireur pour un tireur moyen : en 2020-21, Rudy Gobert (0/4 à 3
+points) était ramené à 34,5 % (indice 45) et Ben Simmons (3/10) à 36,3 % (indice 50). Sous
+1 tentative à 3 points par match (`MIN_FG3A_PER_GAME`) ou 0,5 lancer franc par match
+(`MIN_FTA_PER_GAME`), calculé sur les matchs de la période affichée (donc aussi en playoffs),
+l'axe est vide, comme sans aucune tentative, et le joueur sort de la population de référence de
+cet axe. Le tableau garde le vrai pourcentage et les tentatives, avec "NC" (non classé) à la place
+du score (`0.0% (4 tent.)  ·  NC`, ou `0 tent.  ·  NC` sans aucune tentative), et le survol du cercle creux indique "volume trop faible (4 tentatives en 71 matchs)". Part des
+joueurs de référence sous chaque seuil :
+
+| Saison | Type | 3PT < 1/match | LF < 0,5/match |
+|---|---|---|---|
+| 2004-05 | saison régulière | 53 % | 6 % |
+| 2004-05 | playoffs | 48 % | 16 % |
+| 2014-15 | saison régulière | 38 % | 10 % |
+| 2014-15 | playoffs | 37 % | 15 % |
+| 2024-25 | saison régulière | 20 % | 15 % |
+| 2024-25 | playoffs | 23 % | 24 % |
+
+Le seuil à 3 points écarte surtout les intérieurs qui ne tirent pas de loin (48 sur 96 en 2024-25,
+la moitié de la ligue en 2004-05, reflet de l'époque). Pour les lancers francs, un seuil de 1 par
+match écartait 38 % des joueurs de référence 2024-25, dont de bons tireurs qui obtiennent peu de
+fautes (Tyus Jones, 51/57, 0,70 tentative par match) : d'où 0,5.
+
 **Limites connues.** Scoring, Passe, Rebond, Interceptions et Contres sont des valeurs par match :
 elles favorisent les joueurs qui jouent beaucoup, ce qui est assumé pour un radar de production.
-À l'inverse, 3PT% et LF% favorisent les joueurs qui tirent très peu (56,5 % à 3 points sur une
-tentative par match, 100 % aux lancers francs sur quasiment aucune) : le nombre de tentatives
-n'est pas dans les caches, un avertissement est affiché en attendant un vrai correctif.
 
 ## Métrique défensive individuelle (piste abandonnée)
 

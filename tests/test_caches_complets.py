@@ -31,6 +31,8 @@ CACHES = {
     "matchs possibles": (lambda s: RAW / f"team_games_{s}.parquet", nba.NBA_API_TEAM_GAMES_SCHEMA_VERSION),
     "stats équipes saison régulière": (lambda s: RAW / f"team_stats_{s}_regular.parquet", nba.NBA_API_TEAM_STATS_SCHEMA_VERSION),
     "stats équipes playoffs": (lambda s: RAW / f"team_stats_{s}_playoffs.parquet", nba.NBA_API_TEAM_STATS_SCHEMA_VERSION),
+    "tirs saison régulière": (lambda s: RAW / f"shooting_{s}.parquet", nba.NBA_API_SHOOTING_SCHEMA_VERSION),
+    "tirs playoffs": (lambda s: RAW / f"shooting_{s}_playoffs.parquet", nba.NBA_API_SHOOTING_SCHEMA_VERSION),
 }
 
 
@@ -48,6 +50,18 @@ class CachesCompletsTest(unittest.TestCase):
                     self.assertGreater(len(df), 0, f"vide : {path.name}")
                     self.assertIn(SCHEMA_VERSION_COL, df.columns, f"sans version : {path.name}")
                     self.assertEqual(df[SCHEMA_VERSION_COL].iloc[0], version, f"version : {path.name}")
+
+    def test_totaux_de_tirs_dans_les_caches_traites(self):
+        # Ajustement 3PT%/LF% du radar : les 4 totaux doivent être renseignés pour tout joueur
+        # ayant joué sur la période (sinon son axe resterait vide sans raison).
+        for season in nba.SEASONS:
+            for suffix in ("", "_playoffs"):
+                with self.subTest(saison=season, periode=suffix or "régulière"):
+                    df = pd.read_parquet(PROC / f"{season}{suffix}.parquet")
+                    played = df[df["games_played"].fillna(0) > 0]
+                    for col in nba.SHOOTING_TOTAL_COLS:
+                        self.assertIn(col, df.columns)
+                        self.assertTrue(played[col].notna().all(), f"{col} manquant")
 
     def test_caches_salaires(self):
         # kaggle_raw est lu sans version de schéma (voir nba._load_kaggle_raw) ; legacy l'est.
