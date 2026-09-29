@@ -36,7 +36,9 @@ saisons manquantes au lieu de rester bloqué sur un résultat dégradé.
 Le cache disque (`data_cache/processed/nba/`) est versionné (`PROCESSED_SCHEMA_VERSION` dans
 `nba.py`) : si la logique de calcul change (nouvelle colonne, nouveau calcul dérivé...), un
 cache écrit sous une version différente est automatiquement ignoré et recalculé, sans besoin de
-cliquer sur "Rafraîchir" à la main.
+relancer quoi que ce soit à la main. Il n'y a pas de rechargement depuis l'interface : Streamlit
+Cloud ne joint pas stats.nba.com. Les données se mettent à jour en local avec
+`scripts/prefill_cache.py` (voir README), puis les caches sont versionnés dans git.
 
 ## Composition des effectifs (page Effectifs)
 

@@ -232,30 +232,17 @@ else:
 
 
 @st.cache_data(show_spinner="Chargement des données NBA (nba_api + Kaggle)...")
-def load_data(sport_key: str, season: str, force_refresh: bool, period: str = "regular") -> pd.DataFrame:
-    return SPORTS[sport_key].get_player_stats(season, force_refresh=force_refresh, period=period)
+def load_data(sport_key: str, season: str, period: str = "regular") -> pd.DataFrame:
+    return SPORTS[sport_key].get_player_stats(season, period=period)
 
 
 @st.cache_data(show_spinner="Chargement du classement des équipes...")
-def load_team_ranking(sport_key: str, season: str, force_refresh: bool, period: str = "regular") -> pd.DataFrame:
-    # Défini ici (pas près du bandeau tout en bas du fichier qui l'utilise) pour que
-    # _handle_refresh_click, juste en dessous, puisse aussi vider ce cache-ci -- même raison que
-    # load_data ci-dessus.
-    return SPORTS[sport_key].get_team_ranking(season, period=period, force_refresh=force_refresh)
+def load_team_ranking(sport_key: str, season: str, period: str = "regular") -> pd.DataFrame:
+    return SPORTS[sport_key].get_team_ranking(season, period=period)
 
 
-def _handle_refresh_click() -> None:
-    # Exécuté par Streamlit AVANT le re-run complet du script (callback on_click) — donc même si
-    # le bouton est déclaré tout en bas de la sidebar (affiché en dernier), son effet est bien
-    # pris en compte dès le chargement des données un peu plus haut dans le script.
-    load_data.clear()  # sinon les autres saisons déjà en cache mémoire resteraient périmées
-    load_team_ranking.clear()
-    st.session_state["_pending_force_refresh"] = True
-
-
-# True uniquement pour le run qui suit immédiatement un clic sur "Rafraîchir" (voir le bouton,
-# positionné tout en bas de la sidebar) — pop() pour ne pas rester bloqué à True indéfiniment.
-force_refresh = st.session_state.pop("_pending_force_refresh", False)
+# Pas de rechargement depuis l'interface : Streamlit Cloud ne joint pas stats.nba.com. Les données
+# se mettent à jour en local avec scripts/prefill_cache.py, puis les caches sont versionnés.
 
 if is_all_seasons:
     frames = []
@@ -265,7 +252,7 @@ if is_all_seasons:
             # period="regular" explicite (== stats_period ici de toute façon, voir plus haut) :
             # le mode "Toutes les saisons" n'a pas le sélecteur playoffs, uniquement de la saison
             # régulière.
-            frames.append(load_data(sport.key, s, force_refresh, "regular"))
+            frames.append(load_data(sport.key, s, "regular"))
         except Exception as exc:  # nba_api down, pas d'internet, dataset Kaggle absent, etc.
             failed_seasons.append((s, exc))
     if not frames:
@@ -279,7 +266,7 @@ if is_all_seasons:
         )
 else:
     try:
-        df = load_data(sport.key, season, force_refresh, stats_period)
+        df = load_data(sport.key, season, stats_period)
     except Exception as exc:
         st.error(f"Impossible de charger les données pour {season} : {exc}")
         st.stop()
@@ -360,12 +347,11 @@ searched_player = st.sidebar.selectbox(
 )
 
 def _handle_radar_click() -> None:
-    # Exécuté par Streamlit avant le switch de page (callback on_click, même mécanisme que
-    # _handle_refresh_click plus bas) : dépose le joueur/la saison dans st.session_state, lus
-    # puis pop() par la page radar pour ne pré-sélectionner qu'une fois (même pattern que
-    # _pending_force_refresh). st.switch_page ici plutôt que dans le corps du script : un
+    # Exécuté par Streamlit avant le switch de page (callback on_click) : dépose le joueur/la
+    # saison dans st.session_state, lus puis pop() par la page radar pour ne pré-sélectionner
+    # qu'une fois. st.switch_page ici plutôt que dans le corps du script : un
     # switch_page() appelé en dehors d'un callback interromprait immédiatement le script AVANT
-    # que le reste de la sidebar (filtres, bouton Rafraîchir...) n'ait fini de s'afficher.
+    # que le reste de la sidebar (filtres...) n'ait fini de s'afficher.
     st.session_state["radar_preselect_player"] = searched_player
     st.session_state["radar_preselect_season"] = None if is_all_seasons else season
     st.switch_page("pages/1_Radar_de_comparaison.py")
@@ -377,7 +363,7 @@ if searched_player != "Aucun":
         help="Ouvre la vue radar de comparaison de profils avec ce joueur pré-sélectionné.",
     )
 
-# Filtres avancés repliés (équipe, seuils minutes/matchs, salaires estimés, rafraîchir) -- voir le
+# Filtres avancés repliés (équipe, seuils minutes/matchs, salaires estimés) -- voir le
 # commentaire d'ordre de la sidebar plus haut. expanded=False : replié par défaut, l'utilisateur
 # l'ouvre seulement s'il en a besoin ce jour-là.
 with st.sidebar.expander("Filtres avancés"):
@@ -418,11 +404,6 @@ with st.sidebar.expander("Filtres avancés"):
                 "disponible (± 2 ans). Décoche pour ne garder que les salaires exacts."
             ),
         )
-
-    st.markdown("---")
-    st.button(
-        "Rafraîchir les données (re-télécharger)", icon=":material/refresh:", on_click=_handle_refresh_click
-    )
 
 
 # --------------------------------------------------------------------------
@@ -844,7 +825,7 @@ else:
         ranking_season = season
 
     try:
-        team_ranking_df = load_team_ranking(sport.key, ranking_season, force_refresh, ranking_period)
+        team_ranking_df = load_team_ranking(sport.key, ranking_season, ranking_period)
     except Exception as exc:
         team_ranking_df = None
         st.warning(f"Classement des équipes indisponible pour {ranking_season} : {exc}")

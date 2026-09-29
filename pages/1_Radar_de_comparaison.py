@@ -127,7 +127,7 @@ STATS_PERIOD_OPTIONS = {
 }
 
 # Pré-sélection déposée par Dashboard.py (bouton "Voir le profil radar") — pop() pour ne
-# pré-sélectionner qu'une fois, même pattern que _pending_force_refresh dans Dashboard.py.
+# pré-sélectionner qu'une fois.
 preselected_player = st.session_state.pop("radar_preselect_player", None)
 preselected_season = st.session_state.pop("radar_preselect_season", None)
 

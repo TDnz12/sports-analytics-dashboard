@@ -74,6 +74,8 @@ PYTHONPATH=. python scripts/prefill_cache.py            # saisons manquantes seu
 PYTHONPATH=. python scripts/prefill_cache.py --force     # tout recalculer
 ```
 
+C'est aussi la seule façon de mettre à jour les données : l'application en ligne n'a pas de bouton de rechargement, car Streamlit Cloud ne joint pas stats.nba.com. On lance le script en local, puis on commite les fichiers de `data_cache/`.
+
 ## Tests
 
 ```bash

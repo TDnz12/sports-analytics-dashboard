@@ -67,8 +67,8 @@ def read_cache(path: Path, schema_version: int | None = None) -> pd.DataFrame | 
     """Lit un cache parquet, ou None si absent. Si `schema_version` est fourni,
     le cache est aussi invalidé (traité comme absent) quand la version stockée
     ne correspond pas — ça évite qu'un changement de code (ex: nouvelle colonne
-    calculée) laisse silencieusement un vieux cache incomplet en place tant que
-    personne ne clique sur "Rafraîchir". Un cache écrit avant l'introduction du
+    calculée) laisse silencieusement un vieux cache incomplet en place jusqu'au
+    prochain passage de scripts/prefill_cache.py. Un cache écrit avant l'introduction du
     versionnement (pas de colonne `_schema_version`) est aussi traité comme
     invalide dès qu'un `schema_version` est demandé."""
     if not path.exists():
