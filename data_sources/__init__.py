@@ -15,6 +15,10 @@ Pour ajouter un sport plus tard :
     2. L'enregistrer ci-dessous dans SPORTS.
     3. Rien à changer dans Dashboard.py : le sélecteur de sport et les listes de
        métriques/saisons se construisent automatiquement à partir de SPORTS.
+
+Un sport à plusieurs compétitions (rugby : Top 14, Pro D2, Six Nations) les déclare dans
+SportConfig.competitions (liste de base.CompetitionConfig, chacune avec ses saisons) ; voir le
+commentaire de ce champ.
 """
 
 from __future__ import annotations
@@ -24,7 +28,8 @@ from typing import Callable, Optional
 
 import pandas as pd
 
-from . import nba
+from . import nba, rugby
+from .base import CompetitionConfig
 
 
 @dataclass(frozen=True)
@@ -80,6 +85,12 @@ class SportConfig:
     get_mercato_lineup: Optional[Callable[..., pd.DataFrame]] = None
     get_team_identity: Optional[Callable[..., pd.DataFrame]] = None
     get_first_game_teams: Optional[Callable[..., pd.DataFrame]] = None
+    # Compétitions d'un sport qui en a plusieurs (rugby : Top 14, Pro D2, Six Nations). Quand ce
+    # champ est renseigné, les pages affichent un sélecteur "Compétition" sous le sélecteur Sport,
+    # les saisons proposées sont celles de la compétition choisie (pas `seasons`) et les fonctions
+    # du sport reçoivent competition=<clé> en argument nommé. Une compétition available=False est
+    # affichée "bientôt disponible". None (NBA) : pas de sélecteur, comportement inchangé.
+    competitions: Optional[list[CompetitionConfig]] = None
 
 
 # --- Sport actif ---------------------------------------------------------
@@ -106,7 +117,9 @@ NBA = SportConfig(
 )
 
 # --- Sports à venir (aucune implémentation, juste affichés "bientôt") ----
-RUGBY = SportConfig(key="rugby", label="Rugby", available=False)  # prochain sport prévu (performance uniquement, sans salaires)
+# Rugby : déclaré avec ses compétitions, encore indisponible tant qu'aucune n'est livrée
+# (performance uniquement, sans salaires). Voir data_sources/rugby/.
+RUGBY = SportConfig(key="rugby", label="Rugby", available=False, competitions=rugby.COMPETITIONS)
 MMA = SportConfig(key="mma", label="MMA", available=False)
 TENNIS = SportConfig(key="tennis", label="Tennis", available=False)
 

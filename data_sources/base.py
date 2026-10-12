@@ -48,6 +48,19 @@ class Metric:
     category: str = "Volume"  # regroupement dans l'UI: Volume / Efficacité / Salaire
 
 
+@dataclass(frozen=True)
+class CompetitionConfig:
+    """Une compétition d'un sport qui en a plusieurs (rugby : Top 14, Pro D2, Six Nations), voir
+    SportConfig.competitions dans data_sources/__init__.py. Définie ici plutôt que dans
+    __init__.py pour que les modules de sport puissent l'importer sans import circulaire."""
+
+    key: str             # identifiant interne, ex "top14"
+    label: str           # libellé affiché dans l'UI, ex "Top 14"
+    mode: str            # "club" ou "international"
+    available: bool      # False -> affichée "bientôt disponible"
+    seasons: list | None = None  # libellés de saison, la plus récente en premier
+
+
 def normalize_name(name: str) -> str:
     """Clé de jointure robuste pour matcher un même joueur entre deux sources
     (accents, casse, points, suffixes Jr./Sr./III...)."""
