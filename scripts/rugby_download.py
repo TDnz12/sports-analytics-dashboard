@@ -88,6 +88,10 @@ class CircuitBreakerOpen(Exception):
     """Trop d'échecs consécutifs : on arrête tout."""
 
 
+class NotFoundCircuitBreakerOpen(CircuitBreakerOpen):
+    """Coupe-circuit déclenché par un 404 accepté : ce dernier 404 compte comme les autres."""
+
+
 class BudgetExhausted(Exception):
     """--max-requests atteint."""
 
@@ -122,7 +126,7 @@ class Client:
                 logger.warning("Introuvable (404, %d consécutif) : %s", self.consecutive_not_found,
                                url)
                 if self.consecutive_not_found >= MAX_CONSECUTIVE_NOT_FOUND:
-                    raise CircuitBreakerOpen from exc
+                    raise NotFoundCircuitBreakerOpen from exc
                 raise NotFound(exc.url, exc.code, exc.message) from exc
             self.consecutive_failures += 1
             self._log_failure(exc)
@@ -401,9 +405,11 @@ def download_profiles(client: Client, report: ProfilesReport, player_ids: list[i
         logger.info("[%d/%d] Profil %s", i, len(todo), pid)
         try:
             payload = client.get_json(url, allow_404=True)
-        except NotFound:
+        except (NotFound, NotFoundCircuitBreakerOpen) as exc:
             report.not_found += 1
             append_not_found(pid)
+            if isinstance(exc, NotFoundCircuitBreakerOpen):
+                raise
             continue
         except CircuitBreakerOpen:
             report.failed += 1

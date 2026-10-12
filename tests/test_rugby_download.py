@@ -242,9 +242,17 @@ class ProfilesTest(unittest.TestCase):
 
     def test_coupe_circuit_apres_10_404_consecutifs(self):
         session = FakeSession({})   # tout en 404
+        client = rd.Client(session=session, sleep=self.sleeps.append,
+                           failures_path=Path(self.tmp.name) / "failures.csv")
+        report = rd.ProfilesReport()
         with self.assertRaises(rd.CircuitBreakerOpen):
-            self.run_profiles(session, list(range(1, 30)))
-        self.assertEqual(len(session.calls), rd.MAX_CONSECUTIVE_NOT_FOUND)
+            rd.download_profiles(client, report, list(range(1, 30)), force=False)
+        n = rd.MAX_CONSECUTIVE_NOT_FOUND
+        self.assertEqual(len(session.calls), n)
+        # Le 404 qui déclenche le coupe-circuit compte en 404 et est noté, pas en échec.
+        self.assertEqual((report.not_found, report.failed), (n, 0))
+        self.assertEqual(rd.read_not_found(), set(range(1, n + 1)))
+        self.assertFalse((Path(self.tmp.name) / "failures.csv").exists())
 
     def test_coupe_circuit_apres_3_echecs_serveur(self):
         session = FakeSession({profile_url(i): [FakeResponse(503)] for i in range(1, 10)})
