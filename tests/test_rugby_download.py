@@ -2,7 +2,8 @@
 
 Vérifie la reprise (rien n'est retéléchargé au second lancement), le remplacement d'un fichier
 illisible, les nouvelles tentatives sur 503, le coupe-circuit après 3 échecs consécutifs, le
-budget --max-requests et la lecture de --seasons.
+budget --max-requests et la lecture de --seasons. Pour les profils : joueurs uniques des
+compositions, 404 notés et pas redemandés, coupe-circuit sur 404 en série.
 
 Lancer depuis la racine du projet : .venv/bin/python -m unittest discover -s tests -t .
 """
@@ -168,6 +169,107 @@ class DownloadTest(unittest.TestCase):
         self.assertEqual(rd.parse_seasons("top14", "202501,202101"), [202101, 202501])
         with self.assertRaises(ValueError):
             rd.parse_seasons("prod2", "202101")
+
+
+def profile_url(player_id):
+    return f"{rd.INCROWD_BASE}/players/{player_id}?provider=rugbyviz"
+
+
+def profile(player_id):
+    return {"data": {"playerId": player_id, "knownName": f"Joueur {player_id}",
+                     "dateOfBirth": "1999-05-01T12:00:00.000Z", "height": 185, "weight": 86}}
+
+
+def lineup_detail(match_id, home_ids, away_ids):
+    def team(ids):
+        return {"players": [{"id": i, "positionId": n} for n, i in enumerate(ids, 1)]}
+    return {"data": {"id": match_id, "status": "result", "homeTeam": team(home_ids),
+                     "awayTeam": team(away_ids)}}
+
+
+class ProfilesTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        patcher = mock.patch.dict(os.environ, {"RUGBY_JSON_DIR": self.tmp.name})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(self.tmp.cleanup)
+        self.sleeps = []
+
+    def run_profiles(self, session, ids, max_requests=None, force=False):
+        client = rd.Client(session=session, sleep=self.sleeps.append,
+                           failures_path=Path(self.tmp.name) / "failures.csv",
+                           max_requests=max_requests)
+        report = rd.ProfilesReport()
+        rd.download_profiles(client, report, ids, force=force)
+        return client, report
+
+    def test_joueurs_uniques_des_deux_competitions(self):
+        # Joueur 2 en Top 14 et en Pro D2 : compté une fois. Détail illisible ignoré et compté.
+        rd.write_json_gz(rd.incrowd_dir(1002, 202401) / "11.json.gz",
+                         lineup_detail(11, [1, 2], [3]))
+        rd.write_json_gz(rd.incrowd_dir(1013, 202301) / "21.json.gz",
+                         lineup_detail(21, [2, 4], [5]))
+        (rd.incrowd_dir(1013, 202301) / "22.json.gz").write_bytes(b"pas du gzip")
+        rd.write_json_gz(rd.incrowd_dir(1002, 202401) / "list.json.gz", LIST_PAYLOAD)
+        self.assertEqual(rd.collect_player_ids(["top14", "prod2"]), ([1, 2, 3, 4, 5], 1))
+        self.assertEqual(rd.collect_player_ids(["top14"]), ([1, 2, 3], 0))
+
+    def test_telechargement_puis_reprise_sans_requete(self):
+        routes = {profile_url(i): [FakeResponse(200, profile(i))] for i in (1, 2)}
+        _, report = self.run_profiles(FakeSession(routes), [1, 2])
+        self.assertEqual((report.downloaded, report.missing), (2, 0))
+        self.assertTrue((rd.players_dir() / "1.json.gz").exists())
+        session2 = FakeSession({})
+        _, report2 = self.run_profiles(session2, [1, 2])
+        self.assertEqual(session2.calls, [])
+        self.assertEqual((report2.present, report2.missing), (2, 0))
+
+    def test_404_note_pas_redemande_et_pas_un_echec(self):
+        routes = {profile_url(i): [FakeResponse(200, profile(i))] for i in (1, 5)}
+        # 2, 3, 4 en 404 : trois de suite, mais le coupe-circuit des échecs ne se déclenche pas.
+        client, report = self.run_profiles(FakeSession(routes), [1, 2, 3, 4, 5])
+        self.assertEqual((report.downloaded, report.not_found, report.failed), (2, 3, 0))
+        self.assertEqual(rd.read_not_found(), {2, 3, 4})
+        session2 = FakeSession({})
+        _, report2 = self.run_profiles(session2, [1, 2, 3, 4, 5])
+        self.assertEqual(session2.calls, [])
+        self.assertEqual((report2.present, report2.known_not_found, report2.missing), (2, 3, 0))
+        # --force redemande aussi les 404 connus.
+        session3 = FakeSession(routes)
+        self.run_profiles(session3, [1, 2, 3, 4, 5], force=True)
+        self.assertEqual(len(session3.calls), 5)
+
+    def test_coupe_circuit_apres_10_404_consecutifs(self):
+        session = FakeSession({})   # tout en 404
+        with self.assertRaises(rd.CircuitBreakerOpen):
+            self.run_profiles(session, list(range(1, 30)))
+        self.assertEqual(len(session.calls), rd.MAX_CONSECUTIVE_NOT_FOUND)
+
+    def test_coupe_circuit_apres_3_echecs_serveur(self):
+        session = FakeSession({profile_url(i): [FakeResponse(503)] for i in range(1, 10)})
+        with self.assertRaises(rd.CircuitBreakerOpen):
+            self.run_profiles(session, list(range(1, 10)))
+        self.assertEqual(len(session.calls), 3 * (len(rd.RETRY_DELAYS_S) + 1))
+
+    def test_profil_invalide_garde_et_retente(self):
+        routes = {profile_url(1): [FakeResponse(200, profile(999))]}
+        _, report = self.run_profiles(FakeSession(routes), [1])
+        self.assertEqual((report.invalid, report.missing), (1, 1))
+        session2 = FakeSession({profile_url(1): [FakeResponse(200, profile(1))]})
+        _, report2 = self.run_profiles(session2, [1])
+        self.assertEqual((session2.calls, report2.downloaded), ([profile_url(1)], 1))
+
+    def test_profil_a_plat_accepte(self):
+        self.assertIsNone(rd.profile_problem({"playerId": 7, "knownName": "X"}, 7))
+        self.assertIsNotNone(rd.profile_problem(None, 7))
+
+    def test_max_requests(self):
+        routes = {profile_url(i): [FakeResponse(200, profile(i))] for i in (1, 2, 3)}
+        session = FakeSession(routes)
+        with self.assertRaises(rd.BudgetExhausted):
+            self.run_profiles(session, [1, 2, 3], max_requests=2)
+        self.assertEqual(session.calls, [profile_url(1), profile_url(2)])
 
 
 if __name__ == "__main__":
