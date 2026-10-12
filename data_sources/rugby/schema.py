@@ -188,8 +188,10 @@ PLAYER_MATCH_STAT_COLUMNS = [
     "conversions_made", "conversions_missed", "penalty_goals_made", "penalty_goals_missed",
     "goal_attempts", "drop_goals_made", "points",
 ]
+# score_source : "source" (stats du joueur telles que fournies) ou "evenements" (essais, buts et
+# points recomptés depuis les événements, quand la source a perdu le score de l'équipe-match).
 PLAYER_MATCH_COLUMNS = [
-    "match_uid", "team_uid", "player_uid", "minutes", "minutes_method", "appeared",
+    "match_uid", "team_uid", "player_uid", "minutes", "minutes_method", "appeared", "score_source",
 ] + PLAYER_MATCH_STAT_COLUMNS
 EVENT_COLUMNS = [
     "match_uid", "team_uid", "player_uid", "type", "period", "clock_raw_s", "t80_s",

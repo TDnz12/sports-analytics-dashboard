@@ -33,6 +33,10 @@ PERIOD_BOUNDS_S = {1: (0, 2400), 2: (2400, 4800), 3: (4800, 5400), 4: (5400, 600
 YELLOW_S = 600
 REGULATION_S = 4800
 EXTRA_TIME_S = 6000
+# Tolérance du contrôle des minutes par équipe et par match (5 min, 2 au plan) : les arrondis de
+# 23 joueurs s'additionnent et InCrowd décompte parfois un jaune en temps réel (environ 12 min) ;
+# avec 2 min, 25 équipes-matchs sur 374 du Top 14 2025-26 sortaient sans anomalie réelle.
+TEAM_TOLERANCE_MIN = 5.0
 
 
 def t80_seconds(period, clock_s) -> float:
@@ -134,13 +138,10 @@ def reconstruct_minutes(lineups: pd.DataFrame, events: pd.DataFrame,
 
 
 def team_minutes_check(player_match: pd.DataFrame, rebuilt: pd.DataFrame, matches: pd.DataFrame,
-                       tolerance_min: float = 5.0) -> pd.DataFrame:
+                       tolerance_min: float = TEAM_TOLERANCE_MIN) -> pd.DataFrame:
     """Contrôle par équipe et par match : somme des minutes des joueurs comparée à
     15 x durée réelle du match (80 ou 100 min) moins le temps d'exclusion de l'équipe (cartons,
-    d'après les événements). `rebuilt` : sortie de reconstruct_minutes (pour team_excluded_s).
-    Tolérance 5 min (2 au plan) : les arrondis de 23 joueurs s'additionnent et InCrowd décompte
-    parfois un jaune en temps réel (environ 12 min) ; avec 2 min, 25 équipes-matchs sur 374 du
-    Top 14 2025-26 sortaient de la tolérance sans anomalie réelle."""
+    d'après les événements). `rebuilt` : sortie de reconstruct_minutes (pour team_excluded_s)."""
     sums = player_match.groupby(["match_uid", "team_uid"], as_index=False)["minutes"].sum(min_count=1)
     excl = rebuilt.groupby(["match_uid", "team_uid"], as_index=False)["team_excluded_s"].sum()
     out = sums.merge(excl, on=["match_uid", "team_uid"], how="left").merge(

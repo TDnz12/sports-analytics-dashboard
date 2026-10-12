@@ -148,6 +148,103 @@ class VariantesTest(unittest.TestCase):
             incrowd.extract_match(self.payload, "prod2")
 
 
+class ChoixDesMinutesTest(unittest.TestCase):
+    """Source gardée si sa somme par équipe est dans la tolérance (5 min) ; sinon minutes
+    reconstruites si la reconstruction y rentre ; les deux hors tolérance : source gardée."""
+
+    def setUp(self):
+        self.payload = copy.deepcopy(load_fixture())
+        self.data = self.payload["data"]
+        self.home = self.data["homeTeam"]
+
+    def _apply(self):
+        tables = incrowd.extract_match(self.payload, "top14")
+        pm = incrowd.use_rebuilt_minutes_where_better(tables)["player_match"]
+        home_uid = f"icw:{self.home['id']}"
+        return pm[pm["team_uid"] == home_uid], pm[pm["team_uid"] != home_uid]
+
+    def test_source_juste_gardee(self):
+        home, away = self._apply()
+        self.assertTrue((home["minutes_method"] == "source").all())
+        self.assertTrue((away["minutes_method"] == "source").all())
+
+    def test_source_fausse_reconstruction_juste(self):
+        # Minutes source gonflées de 30 min pour un remplaçant (cas Valence-Romans 2025-26).
+        sub = next(p for p in self.home["players"] if p["positionId"] == 20)
+        before = sub["stats"]["minutesPlayedTotal"]
+        sub["stats"]["minutesPlayedTotal"] = before + 30
+        home, away = self._apply()
+        self.assertTrue((home["minutes_method"] == "reconstruit").all())
+        self.assertTrue((away["minutes_method"] == "source").all())   # l'autre équipe ne change pas
+        self.assertAlmostEqual(home.set_index("player_uid").loc[f"icw:{sub['id']}", "minutes"],
+                               before, delta=1)
+
+    def test_les_deux_hors_tolerance_source_gardee(self):
+        # Source gonflée ET reconstruction faussée : on retire la sortie d'un titulaire remplacé
+        # tôt, la reconstruction le laisse alors sur le terrain jusqu'à la fin.
+        home_id = self.home["id"]
+        early = next(e for e in self.data["events"] if e["type"] == "Sub Off"
+                     and e.get("teamId") == home_id and e["minute"] < 60)
+        self.data["events"].remove(early)
+        self.home["players"][0]["stats"]["minutesPlayedTotal"] += 30
+        home, _ = self._apply()
+        self.assertTrue((home["minutes_method"] == "source").all())
+
+
+class RecomptageDuScoreTest(unittest.TestCase):
+    """Score perdu par la source (cas Pro D2 2023-24) : essais, buts et points recomptés depuis les
+    événements, seulement si le recomptage redonne exactement le score officiel."""
+
+    def setUp(self):
+        self.payload = copy.deepcopy(load_fixture())
+        self.data = self.payload["data"]
+        self.home = self.data["homeTeam"]
+        self.scorer = next(p for p in self.home["players"] if p["stats"]["tries"])
+        self.home_uid = f"icw:{self.home['id']}"
+
+    def _apply(self):
+        tables = incrowd.extract_match(self.payload, "top14")
+        tables, report = incrowd.rebuild_scoring_from_events(tables)
+        return tables["player_match"].set_index("player_uid"), report
+
+    def _lose_one_try(self):
+        stats = self.scorer["stats"]
+        stats["tries"] -= 1
+        stats["points"] -= 5
+
+    def test_sans_ecart_rien_ne_change(self):
+        pm, report = self._apply()
+        self.assertTrue(report.empty)
+        self.assertTrue((pm["score_source"] == "source").all())
+
+    def test_score_recompte(self):
+        original = incrowd.extract_match(load_fixture(), "top14")["player_match"].set_index("player_uid")
+        self._lose_one_try()
+        pm, report = self._apply()
+        self.assertEqual(report["applied"].tolist(), [True])
+        home = pm[pm["team_uid"] == self.home_uid]
+        self.assertTrue((home["score_source"] == "evenements").all())
+        self.assertTrue((pm[pm["team_uid"] != self.home_uid]["score_source"] == "source").all())
+        self.assertEqual(home["points"].sum(), self.home["score"])
+        uid = f"icw:{self.scorer['id']}"
+        for col in ("tries", "points", "conversions_made", "penalty_goals_made", "goal_attempts"):
+            self.assertEqual(pm.loc[uid, col], original.loc[uid, col], col)
+        # Les autres stats ne bougent pas.
+        for col in ("tackles", "metres", "carries", "minutes"):
+            self.assertTrue((home[col] == original.loc[home.index, col]).all(), col)
+
+    def test_recomptage_faux_source_gardee(self):
+        self._lose_one_try()
+        # L'événement de l'essai manque aussi : le recomptage ne redonne pas le score.
+        event = next(e for e in self.data["events"]
+                     if e["type"] == "Try" and e.get("playerId") == self.scorer["id"])
+        self.data["events"].remove(event)
+        pm, report = self._apply()
+        self.assertEqual(report["applied"].tolist(), [False])
+        self.assertTrue((pm["score_source"] == "source").all())
+        self.assertEqual(pm.loc[f"icw:{self.scorer['id']}", "tries"], self.scorer["stats"]["tries"])
+
+
 class ExtractSeasonTest(unittest.TestCase):
     def _write(self, path: Path, payload: dict) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -8,8 +8,8 @@ téléchargés par scripts/rugby_download.py dans
 
 Points vérifiés au lot 0 et appliqués ici :
 - minutesPlayedTotal est en base 80, temps d'exclusion déduit : c'est la source des minutes
-  (minutes_method = "source"), sauf en prolongation où il est faux (minutes reconstruites, voir
-  use_rebuilt_minutes_in_extra_time) ;
+  (minutes_method = "source"), sauf en prolongation et quand sa somme par équipe est fausse alors
+  que la reconstruction est juste (minutes reconstruites, voir choose_team_minutes) ;
 - lineoutsWon compte le SAUTEUR chez InCrowd -> lineouts_won_jumper ;
 - les pénalités manquées par joueur ne sont que dans les événements ("Missed penalty") ;
 - phase finale = journée au-delà de regular_rounds de la compétition, jamais roundTypeId (les
@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 
 from . import schema
-from .minutes import reconstruct_minutes, t80_seconds
+from .minutes import reconstruct_minutes, t80_seconds, team_minutes_check
 from .schema import SOURCE_INCROWD, make_uid
 
 # Stats joueur : colonne du schéma -> champ InCrowd. Les colonnes de PLAYER_MATCH_STAT_COLUMNS
@@ -172,6 +172,7 @@ def extract_match(payload: dict, competition: str) -> dict[str, pd.DataFrame]:
                 "minutes": minutes,
                 "minutes_method": "source" if not np.isnan(minutes) else "echec",
                 "appeared": bool(minutes > 0) if not np.isnan(minutes) else False,
+                "score_source": "source",
             }
             row.update({col: _num(s.get(field)) for col, field in PLAYER_STAT_FIELDS.items()})
             row["penalty_goals_missed"] = float(missed_pens.get(player_uid, 0))
@@ -212,26 +213,135 @@ def match_problem(payload: dict | None) -> str | None:
     return None
 
 
-def use_rebuilt_minutes_in_extra_time(tables: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
-    """Matchs avec prolongation : minutes reconstruites depuis les événements à la place de
-    minutesPlayedTotal (minutes_method = "reconstruit"). Seul cas des 9 saisons, la finale du Top 14
-    2024-25 : la source y crédite environ 20 min de trop à des remplaçants et oublie deux jaunes
-    (1 557 min pour Bordeaux-Bègles, 1 480 attendues ; reconstruction 1 481). Un joueur aux
-    événements incohérents passe à NaN ("echec"), comme pour ESPN."""
-    extra = tables["matches"].loc[tables["matches"]["extra_time"], "match_uid"]
-    if extra.empty:
+def choose_team_minutes(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Par équipe et par match, source des minutes retenue. Colonnes : match_uid, team_uid,
+    extra_time, source_ok, rebuilt_ok (somme dans la tolérance, aucun joueur incohérent),
+    use_rebuilt. Minutes reconstruites retenues :
+    - toujours en prolongation : minutesPlayedTotal y est faux (finale du Top 14 2024-25 : environ
+      20 min de trop à des remplaçants, deux jaunes oubliés, 1 557 min pour Bordeaux-Bègles,
+      1 480 attendues ; reconstruction 1 481) ;
+    - sinon quand la somme source sort de la tolérance ET que la reconstruction y rentre (minutes
+      gonflées de Valence-Romans en Pro D2 2025-26, par exemple). Les deux hors tolérance : la
+      source est gardée, et le rapport de contrôle le signale."""
+    m, pm = tables["matches"], tables["player_match"]
+    rebuilt = reconstruct_minutes(tables["lineups"], tables["events"], m)
+    key = ["match_uid", "team_uid"]
+    source = team_minutes_check(pm, rebuilt, m)
+    rebuilt_check = team_minutes_check(rebuilt.rename(columns={"minutes_rebuilt": "minutes"}),
+                                       rebuilt, m)
+    incomplete = rebuilt["minutes_rebuilt"].isna().groupby([rebuilt[k] for k in key]).any()
+    out = (source[key + ["extra_time", "ok"]].rename(columns={"ok": "source_ok"})
+           .merge(rebuilt_check[key + ["ok"]].rename(columns={"ok": "rebuilt_ok"}), on=key)
+           .merge(incomplete.rename("incomplete").reset_index(), on=key))
+    out["rebuilt_ok"] = out["rebuilt_ok"] & ~out["incomplete"]
+    out["use_rebuilt"] = out["extra_time"] | (~out["source_ok"] & out["rebuilt_ok"])
+    return out.drop(columns="incomplete")
+
+
+def use_rebuilt_minutes_where_better(tables: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    """Remplace minutesPlayedTotal par les minutes reconstruites (minutes_method = "reconstruit")
+    pour les équipes-matchs retenues par choose_team_minutes. Un joueur aux événements incohérents
+    (possible seulement en prolongation) passe à NaN ("echec"), comme pour ESPN."""
+    choice = choose_team_minutes(tables)
+    chosen = choice.loc[choice["use_rebuilt"], ["match_uid", "team_uid"]]
+    if chosen.empty:
         return tables
-    lineups = tables["lineups"][tables["lineups"]["match_uid"].isin(extra)]
-    rebuilt = reconstruct_minutes(lineups, tables["events"], tables["matches"])
-    pm = tables["player_match"].merge(
-        rebuilt[["match_uid", "player_uid", "minutes_rebuilt"]], on=["match_uid", "player_uid"],
-        how="left")
-    mask = pm["match_uid"].isin(extra)
+    key = ["match_uid", "team_uid"]
+    rebuilt = reconstruct_minutes(tables["lineups"].merge(chosen, on=key), tables["events"],
+                                  tables["matches"])
+    pm = tables["player_match"].merge(rebuilt[key + ["player_uid", "minutes_rebuilt"]],
+                                      on=key + ["player_uid"], how="left", indicator=True)
+    mask = pm.pop("_merge") == "both"
     pm.loc[mask, "minutes"] = pm.loc[mask, "minutes_rebuilt"]
     pm.loc[mask, "minutes_method"] = np.where(pm.loc[mask, "minutes"].notna(), "reconstruit", "echec")
     known = mask & pm["minutes"].notna()
     pm.loc[known, "appeared"] = pm.loc[known, "minutes"] > 0
     return {**tables, "player_match": pm.drop(columns="minutes_rebuilt")}
+
+
+# Points par action de score. L'essai de pénalité (7 points) revient à l'équipe, jamais à un joueur
+# (vérifié : points des joueurs + 7 x essais de pénalité = score).
+SCORE_POINTS = {"try": 5, "conversion": 2, "penalty_goal": 3, "drop_goal": 3}
+SCORE_COLUMNS = {"try": "tries", "conversion": "conversions_made",
+                 "penalty_goal": "penalty_goals_made", "drop_goal": "drop_goals_made"}
+PENALTY_TRY_POINTS = 7
+
+
+def official_scores(matches: pd.DataFrame) -> pd.DataFrame:
+    """Score officiel de chaque équipe-match : match_uid, team_uid, score."""
+    return pd.concat([
+        matches[["match_uid", "home_team_uid", "home_score"]].set_axis(
+            ["match_uid", "team_uid", "score"], axis=1),
+        matches[["match_uid", "away_team_uid", "away_score"]].set_axis(
+            ["match_uid", "team_uid", "score"], axis=1),
+    ], ignore_index=True)
+
+
+def score_gaps(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Par équipe-match : score officiel, points des joueurs, essais de pénalité (événements) et
+    écart = score - (points des joueurs + 7 x essais de pénalité)."""
+    key = ["match_uid", "team_uid"]
+    ev = tables["events"]
+    pt = ev[ev["type"] == "penalty_try"].groupby(key).size().rename("penalty_tries")
+    players = tables["player_match"].groupby(key)["points"].sum().rename("player_points")
+    out = (official_scores(tables["matches"]).merge(players.reset_index(), on=key, how="left")
+           .merge(pt.reset_index(), on=key, how="left"))
+    out["penalty_tries"] = out["penalty_tries"].fillna(0)
+    out["gap"] = out["score"] - out["player_points"] - PENALTY_TRY_POINTS * out["penalty_tries"]
+    return out
+
+
+def rebuild_scoring_from_events(tables: dict[str, pd.DataFrame]) -> tuple[dict[str, pd.DataFrame],
+                                                                           pd.DataFrame]:
+    """Équipes-matchs où la source a perdu une partie du score (points des joueurs + 7 x essais de
+    pénalité différents du score officiel ; 16 cas sur les 9 saisons, surtout en Pro D2 2023-24 et
+    2024-25, où les essais et buts manquent aussi dans les stats de l'équipe alors que les
+    événements sont complets) : essais, transformations, pénalités réussies, drops et points de
+    chaque joueur recomptés depuis les événements (score_source = "evenements"), goal_attempts
+    recalculé. Les autres stats ne changent pas. Appliqué seulement si le recomptage redonne
+    EXACTEMENT le score officiel ; sinon la source est gardée. Renvoie (tables, bilan par
+    équipe-match en écart : colonnes de score_gaps + recount_points, applied)."""
+    key = ["match_uid", "team_uid"]
+    gaps = score_gaps(tables)
+    todo = gaps[gaps["gap"] != 0].copy()
+    if todo.empty:
+        return tables, todo.assign(recount_points=pd.Series(dtype=float),
+                                   applied=pd.Series(dtype=bool))
+    ev = tables["events"]
+    # Seuls les événements de joueurs présents sur la feuille de leur équipe comptent : un point
+    # attribué à personne fait échouer le contrôle du score, et la source est alors gardée.
+    on_sheet = tables["lineups"][key + ["player_uid"]].merge(todo[key], on=key)
+    scoring = ev[ev["type"].isin(list(SCORE_POINTS))].merge(on_sheet, on=key + ["player_uid"])
+    if scoring.empty:
+        counts = pd.DataFrame(columns=list(SCORE_POINTS), dtype=float,
+                              index=pd.MultiIndex.from_arrays([[], [], []],
+                                                              names=key + ["player_uid"]))
+    else:
+        counts = (scoring.groupby(key + ["player_uid", "type"]).size().unstack("type", fill_value=0)
+                  .reindex(columns=list(SCORE_POINTS), fill_value=0))
+    counts["points"] = sum(counts[t] * p for t, p in SCORE_POINTS.items())
+    recount = counts.groupby(level=key)["points"].sum().rename("recount_points").reset_index()
+    todo = todo.merge(recount, on=key, how="left")
+    todo["recount_points"] = todo["recount_points"].fillna(0)
+    todo["applied"] = (todo["recount_points"] + PENALTY_TRY_POINTS * todo["penalty_tries"]
+                       == todo["score"])
+    applied = todo.loc[todo["applied"], key]
+    if applied.empty:
+        return tables, todo
+
+    pm = tables["player_match"].merge(applied.assign(_fix=True), on=key, how="left")
+    fix = pm.pop("_fix").notna()
+    new = (counts.rename(columns=SCORE_COLUMNS).reset_index()
+           .merge(applied, on=key)[key + ["player_uid"] + list(SCORE_COLUMNS.values()) + ["points"]])
+    pm = pm.merge(new, on=key + ["player_uid"], how="left", suffixes=("", "_ev"))
+    for col in list(SCORE_COLUMNS.values()) + ["points"]:
+        pm.loc[fix, col] = pm.loc[fix, f"{col}_ev"].fillna(0)
+        pm = pm.drop(columns=f"{col}_ev")
+    pm.loc[fix, "goal_attempts"] = (pm.loc[fix, "conversions_made"] + pm.loc[fix, "conversions_missed"]
+                                    + pm.loc[fix, "penalty_goals_made"]
+                                    + pm.loc[fix, "penalty_goals_missed"])
+    pm.loc[fix, "score_source"] = "evenements"
+    return {**tables, "player_match": pm[schema.PLAYER_MATCH_COLUMNS]}, todo
 
 
 def extract_season(competition: str, season_id: int,
@@ -270,4 +380,5 @@ def extract_season(competition: str, season_id: int,
         tables[name] = (df.assign(_o=df["match_uid"].map(rank))
                           .sort_values("_o", kind="stable").drop(columns="_o")
                           .reset_index(drop=True))
-    return use_rebuilt_minutes_in_extra_time(tables)
+    tables = use_rebuilt_minutes_where_better(tables)
+    return rebuild_scoring_from_events(tables)[0]

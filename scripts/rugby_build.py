@@ -25,11 +25,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from data_sources.base import write_cache  # noqa: E402
 from data_sources.rugby import schema  # noqa: E402
 from data_sources.rugby.aggregate import aggregate_season  # noqa: E402
-from data_sources.rugby.incrowd import extract_season  # noqa: E402
-from data_sources.rugby.minutes import reconstruct_minutes, team_minutes_check  # noqa: E402
+from data_sources.rugby.incrowd import extract_season, score_gaps  # noqa: E402
+from data_sources.rugby.minutes import (  # noqa: E402
+    TEAM_TOLERANCE_MIN, reconstruct_minutes, team_minutes_check,
+)
 from data_sources.rugby.positions import UNDETERMINED  # noqa: E402
-
-PENALTY_TRY_POINTS = 7
 
 
 def parse_seasons(competition: str, text: str | None) -> list[int]:
@@ -86,20 +86,26 @@ def control_report(tables: dict[str, pd.DataFrame], processed: dict[str, pd.Data
     dup = pm.duplicated(["match_uid", "player_uid"]).sum()
     add(f"Clés (match_uid, player_uid) en double dans player_match : {dup}")
 
-    # Cohérence joueurs / équipe
-    sums = pm.groupby(["match_uid", "team_uid"])[["points", "tries"]].sum().reset_index()
-    chk = tm.merge(sums, on=["match_uid", "team_uid"], suffixes=("_team", "_players"))
-    pts_gap = chk["points_team"] - chk["points_players"] - PENALTY_TRY_POINTS * chk["penalty_tries"]
-    add(f"Points : somme des joueurs + 7 x essais de pénalité = points de l'équipe pour "
-        f"{int((pts_gap == 0).sum())}/{len(chk)} équipes-matchs "
-        f"({int(chk['penalty_tries'].sum())} essais de pénalité)")
-    for r in chk[pts_gap != 0].head(5).itertuples():
-        add(f"  écart {r.match_uid} {r.team} : équipe {r.points_team:.0f}, joueurs {r.points_players:.0f}")
-    tries_gap = chk["tries_team"] - chk["tries_players"] - chk["penalty_tries"]
-    tries_gap_raw = chk["tries_team"] - chk["tries_players"]
-    add(f"Essais : somme des joueurs = essais de l'équipe hors essais de pénalité pour "
-        f"{int((tries_gap == 0).sum())}/{len(chk)} ; essais de l'équipe tout compris pour "
-        f"{int((tries_gap_raw == 0).sum())}/{len(chk)}")
+    # Cohérence joueurs / score officiel (après recomptage depuis les événements)
+    key = ["match_uid", "team_uid"]
+    recounted = pm[pm["score_source"] == "evenements"].drop_duplicates(key)
+    add(f"Score recompté depuis les événements (essais, buts, points des joueurs) : "
+        f"{len(recounted)} équipe(s)-match(s)")
+    for r in recounted.itertuples():
+        add(f"  {r.match_uid} {r.team_uid}")
+    gaps = score_gaps(tables)
+    pts_gap = gaps["gap"]
+    add(f"Points : somme des joueurs + 7 x essais de pénalité = score officiel pour "
+        f"{int((pts_gap == 0).sum())}/{len(gaps)} équipes-matchs "
+        f"({int(gaps['penalty_tries'].sum())} essais de pénalité)")
+    for r in gaps[pts_gap != 0].itertuples():
+        add(f"  Écart restant, source gardée (le recomptage ne redonne pas le score) : {r.match_uid} "
+            f"{r.team_uid}, score {r.score:.0f}, joueurs {r.player_points:.0f}")
+    try_ev = ev[ev["type"] == "try"].groupby(key).size()
+    tries_players = pm.groupby(key)["tries"].sum()
+    tries_ok = (tries_players - try_ev.reindex(tries_players.index).fillna(0) == 0).sum()
+    add(f"Essais : somme des joueurs = événements « essai » (hors essais de pénalité) pour "
+        f"{int(tries_ok)}/{len(tries_players)} équipes-matchs")
     score = pd.concat([
         m[["match_uid", "home_team_uid", "home_score"]].set_axis(["match_uid", "team_uid", "score"], axis=1),
         m[["match_uid", "away_team_uid", "away_score"]].set_axis(["match_uid", "team_uid", "score"], axis=1),
@@ -125,17 +131,29 @@ def control_report(tables: dict[str, pd.DataFrame], processed: dict[str, pd.Data
     add(f"Minutes par match (2 équipes, 80 min) : min {_fmt(per_match[~m['extra_time'].values].min())}, "
         f"médiane {_fmt(per_match[~m['extra_time'].values].median())}, "
         f"max {_fmt(per_match[~m['extra_time'].values].max())} (référence 2 400)")
-    add(f"Contrôle 15 x durée - exclusions (cartons d'après les événements), tolérance 5 min : "
-        f"{int(check['ok'].sum())}/{len(check)} équipes-matchs dans la tolérance ; écart médian "
-        f"{check['gap_min'].median():+.1f} min")
-    worst = check.reindex(check["gap_min"].abs().sort_values(ascending=False).index).head(5)
-    for r in worst.itertuples():
-        add(f"  {r.match_uid} {r.team_uid} : somme {_fmt(r.minutes_sum)}, attendu "
-            f"{r.expected_min:.0f} (exclusions {r.exclusion_min:.0f} min), écart {r.gap_min:+.0f}")
-    cmp = pm[["match_uid", "player_uid", "minutes"]].merge(rebuilt, on=["match_uid", "player_uid"])
+    switched = pm[pm["minutes_method"] != "source"].drop_duplicates(["match_uid", "team_uid"])
+    switched_extra = switched["match_uid"].isin(m.loc[m["extra_time"], "match_uid"])
+    add(f"Minutes reconstruites à la place de la source : {len(switched)} équipe(s)-match(s) "
+        f"({int(switched_extra.sum())} en prolongation, {int((~switched_extra).sum())} parce que la "
+        f"source sort de la tolérance et la reconstruction y rentre)")
+    for r in switched[~switched_extra.values].itertuples():
+        add(f"  {r.match_uid} {r.team_uid}")
+    add(f"Contrôle 15 x durée - exclusions (cartons d'après les événements), tolérance "
+        f"{TEAM_TOLERANCE_MIN:.0f} min, après ce choix : {int(check['ok'].sum())}/{len(check)} "
+        f"équipes-matchs dans la tolérance ; écart médian {check['gap_min'].median():+.1f} min")
+    for r in check[~check["ok"]].itertuples():
+        rb = rebuilt[(rebuilt["match_uid"] == r.match_uid) & (rebuilt["team_uid"] == r.team_uid)]
+        add(f"  Hors tolérance, source gardée (reconstruction aussi hors tolérance ou incomplète) : "
+            f"{r.match_uid} {r.team_uid}, somme source {_fmt(r.minutes_sum)}, reconstruite "
+            f"{_fmt(rb['minutes_rebuilt'].sum())}, attendu {r.expected_min:.0f}, écart {r.gap_min:+.0f}")
+    # Seulement les lignes en minutes source : ailleurs, la reconstruction serait comparée à
+    # elle-même.
+    cmp = pm.loc[pm["minutes_method"] == "source", ["match_uid", "player_uid", "minutes"]].merge(
+        rebuilt, on=["match_uid", "player_uid"])
     diff = cmp["minutes_rebuilt"] - cmp["minutes"]
     valid = diff.notna()
-    add(f"Validation croisée (minutes reconstruites depuis les événements contre minutesPlayedTotal) : "
+    add(f"Validation croisée (minutes reconstruites depuis les événements contre minutesPlayedTotal, "
+        f"{len(cmp)} lignes en minutes source) : "
         f"{(diff[valid].abs() <= 1).mean():.1%} des lignes à 1 minute près (objectif 95 %), "
         f"{(diff[valid] == 0).mean():.1%} exactes, {int((~valid).sum())} ligne(s) incohérente(s), "
         f"{int((diff[valid].abs() > 5).sum())} écart(s) de plus de 5 min")
@@ -165,8 +183,10 @@ def control_report(tables: dict[str, pd.DataFrame], processed: dict[str, pd.Data
 
     summary.update({
         "matchs": len(m), "finales": n_final, "prolong.": len(extra),
-        "écarts points": int((pts_gap != 0).sum()), "écarts pén. manq.": int(len(mp) - mp_ok),
-        "hors tol. minutes": int((~check["ok"]).sum()), "joueurs": len(full),
+        "score recompté": len(recounted), "écarts points": int((pts_gap != 0).sum()),
+        "écarts pén. manq.": int(len(mp) - mp_ok),
+        "minutes reconstr.": len(switched), "hors tol. minutes": int((~check["ok"]).sum()),
+        "joueurs": len(full),
         "au-dessus seuil": int((~full["low_sample_size"]).sum()),
         "Indét. au-dessus": len(und_ok),
     })

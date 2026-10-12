@@ -50,6 +50,7 @@ def mini_season():
                                 + row["penalty_goals_made"] + row["penalty_goals_missed"])
         row.update({"match_uid": match, "team_uid": team, "player_uid": player, "minutes": minutes,
                     "minutes_method": "source" if minutes == minutes else "echec",
+                    "score_source": "source",
                     "appeared": bool(minutes > 0) if minutes == minutes else True})
         pm.append(row)
     return {"matches": matches, "lineups": pd.DataFrame(lineups),
