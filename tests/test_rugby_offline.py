@@ -47,8 +47,8 @@ class SansReseauTest(unittest.TestCase):
             del sys.modules[name]
         with mock.patch.object(socket, "socket", interdit), \
                 mock.patch.object(socket, "create_connection", interdit):
-            importlib.import_module("data_sources.rugby")
-            importlib.import_module("data_sources.rugby.schema")
+            for module in ("", ".schema", ".incrowd", ".minutes", ".positions", ".aggregate"):
+                importlib.import_module("data_sources.rugby" + module)
 
 
 if __name__ == "__main__":

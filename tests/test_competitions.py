@@ -70,12 +70,23 @@ class CheminsTest(unittest.TestCase):
         self.assertEqual(path, CACHE_ROOT / "raw" / "rugby" / "top14" / "2024-25" / "player_match.parquet")
         self.assertEqual(schema.processed_path("six_nations", "2026"),
                          CACHE_ROOT / "processed" / "rugby" / "six_nations" / "2026.parquet")
+        self.assertEqual(schema.processed_path("top14", "2024-25", "regular"),
+                         CACHE_ROOT / "processed" / "rugby" / "top14" / "2024-25_regular.parquet")
+
+    def test_racine_d_essai(self):
+        root = Path("/tmp/essai")
+        self.assertEqual(schema.raw_table_path("top14", "2024-25", "events", root=root),
+                         root / "raw" / "rugby" / "top14" / "2024-25" / "events.parquet")
+        self.assertEqual(schema.processed_path("top14", "2024-25", root=root),
+                         root / "processed" / "rugby" / "top14" / "2024-25.parquet")
 
     def test_refus(self):
         with self.assertRaises(ValueError):
             schema.raw_table_path("top14", "2024-25", "inconnue")
         with self.assertRaises(ValueError):
             schema.processed_path("top14", "2026")
+        with self.assertRaises(ValueError):
+            schema.processed_path("top14", "2024-25", "playoffs")
 
     def test_json_hors_du_depot(self):
         with mock.patch.dict(os.environ, {}, clear=False):
@@ -91,7 +102,7 @@ class CheminsTest(unittest.TestCase):
 class ColonnesTest(unittest.TestCase):
     def test_pas_de_doublon(self):
         for cols in (schema.MATCH_COLUMNS, schema.LINEUP_COLUMNS, schema.PLAYER_MATCH_COLUMNS,
-                     schema.EVENT_COLUMNS, schema.PROFILE_COLUMNS):
+                     schema.EVENT_COLUMNS, schema.TEAM_MATCH_COLUMNS, schema.PROFILE_COLUMNS):
             self.assertEqual(len(cols), len(set(cols)))
 
     def test_touches_nommees_par_leur_sens(self):

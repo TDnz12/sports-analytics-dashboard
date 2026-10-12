@@ -109,7 +109,8 @@ def season_id(competition: str, label: str) -> int:
 # --- Caches ----------------------------------------------------------------
 RUGBY_RAW_DIR = RAW_ROOT / "rugby"
 RUGBY_PROCESSED_DIR = PROCESSED_ROOT / "rugby"
-PROFILES_INCROWD_PATH = RUGBY_RAW_DIR / "profiles_incrowd.parquet"
+# Pas de table de profils InCrowd : profils abandonnés en V1 (décision 11 du plan, environ 60 % de
+# 404). Les profils ESPN (Six Nations) seront lus dans le boxscore, au lot 7.
 
 # JSON bruts téléchargés (environ 600 Mo décompressés) : HORS du dépôt, jamais versionnés. Par
 # défaut dans le dossier personnel, pas sur le Bureau : le Bureau est synchronisé avec iCloud, qui
@@ -126,20 +127,33 @@ def json_dir() -> Path:
 RAW_TABLES = ("matches", "lineups", "player_match", "events", "team_match")
 
 
-def raw_table_path(competition: str, season: str, table: str) -> Path:
-    """data_cache/raw/rugby/<compétition>/<saison>/<table>.parquet ; `season` est le libellé."""
+# Périodes de la table traitée : "all" = saison complète, phases finales incluses (défaut) ;
+# "regular" = phase régulière seule. Pas de période "phases finales seules" (5 matchs au plus).
+PERIODS = ("all", "regular")
+
+
+def raw_table_path(competition: str, season: str, table: str, root: Path | None = None) -> Path:
+    """data_cache/raw/rugby/<compétition>/<saison>/<table>.parquet ; `season` est le libellé.
+    `root` remplace data_cache/ (essais hors du dépôt, ex. scripts/rugby_build.py --out-root)."""
     if table not in RAW_TABLES:
         raise ValueError(f"Table inconnue : {table!r}")
     if season not in season_labels(competition):
         raise ValueError(f"Saison {season!r} inconnue pour {competition}")
-    return RUGBY_RAW_DIR / competition / season / f"{table}.parquet"
+    base = RUGBY_RAW_DIR if root is None else Path(root) / "raw" / "rugby"
+    return base / competition / season / f"{table}.parquet"
 
 
-def processed_path(competition: str, season: str) -> Path:
-    """data_cache/processed/rugby/<compétition>/<saison>.parquet (une ligne par joueur)."""
+def processed_path(competition: str, season: str, period: str = "all",
+                   root: Path | None = None) -> Path:
+    """data_cache/processed/rugby/<compétition>/<saison>[_regular].parquet (une ligne par joueur),
+    même convention de suffixe que les caches NBA (_playoffs)."""
     if season not in season_labels(competition):
         raise ValueError(f"Saison {season!r} inconnue pour {competition}")
-    return RUGBY_PROCESSED_DIR / competition / f"{season}.parquet"
+    if period not in PERIODS:
+        raise ValueError(f"Période inconnue : {period!r} (attendu : {', '.join(PERIODS)})")
+    base = RUGBY_PROCESSED_DIR if root is None else Path(root) / "processed" / "rugby"
+    suffix = "" if period == "all" else f"_{period}"
+    return base / competition / f"{season}{suffix}.parquet"
 
 
 # Versions de schéma (même mécanisme que nba.PROCESSED_SCHEMA_VERSION : base.read_cache traite
@@ -148,9 +162,16 @@ RUGBY_RAW_TABLES_SCHEMA_VERSION = 1      # les 5 tables de RAW_TABLES, produites
 RUGBY_PROFILES_SCHEMA_VERSION = 1
 RUGBY_PROCESSED_SCHEMA_VERSION = 1
 
+# Seuils de la population de référence du radar et du badge "échantillon court" (plan, 4.5) :
+# (matchs joués, minutes). À confirmer par la calibration (scripts/rugby_calibrate.py).
+SAMPLE_THRESHOLDS = {CLUB: (5, 240), INTERNATIONAL: (2, 120)}
+
 # --- Colonnes des tables brutes ----------------------------------------------
+# extra_time / duration_min : prolongation (2 x 10 min, phases finales seulement), durée de
+# référence du match en minutes (80 ou 100), utilisée par le contrôle des minutes par équipe.
 MATCH_COLUMNS = [
     "match_uid", "source", "competition", "season", "season_id", "date_utc", "round", "phase",
+    "extra_time", "duration_min",
     "home_team_uid", "home_team", "away_team_uid", "away_team", "home_score", "away_score",
     "status", "coverage_level", "venue",
 ]
@@ -175,9 +196,19 @@ EVENT_COLUMNS = [
 ]
 # Types d'événements normalisés (les deux sources sont ramenées à cette liste).
 EVENT_TYPES = (
-    "sub_on", "sub_off", "yellow", "red", "try", "conversion", "conversion_missed",
+    "sub_on", "sub_off", "yellow", "red", "try", "penalty_try", "conversion", "conversion_missed",
     "penalty_goal", "penalty_missed", "drop_goal", "drop_missed", "period_start", "period_end",
 )
+# Stats par équipe et par match : contrôles de cohérence (points, essais, pénalités manquées) et
+# futur classement. scrums_won / scrums_lost : scrumsTotal est vide chez InCrowd.
+TEAM_MATCH_COLUMNS = [
+    "match_uid", "team_uid", "team", "is_home", "points", "tries", "penalty_tries",
+    "conversions_made", "conversions_missed", "penalty_goals_made", "penalty_goals_missed",
+    "drop_goals_made", "drop_goals_missed", "goal_attempts", "lineouts_won", "total_lineouts",
+    "scrums_won", "scrums_lost", "possession", "territory", "tackles", "missed_tackles", "carries",
+    "metres", "penalties_conceded", "turnovers_conceded", "turnovers_won", "yellow_cards",
+    "red_cards",
+]
 PROFILE_COLUMNS = [
     "player_uid", "name", "first_name", "last_name", "date_of_birth", "height_cm", "weight_kg",
     "nationality", "profile_position_label", "fetched_at",
