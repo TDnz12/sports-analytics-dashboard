@@ -49,6 +49,9 @@ import numpy as np
 import pandas as pd
 
 from .base import Metric, RAW_ROOT, PROCESSED_ROOT, normalize_name, read_cache, write_cache
+from .radar_common import (  # moteur du radar, partagé avec le rugby
+    _percentile_by_position, _zscore_by_position, empty_axis, padded_pct, score_axes,
+)
 
 # Seuil en dessous duquel une moyenne par match (n'importe laquelle) est jugée peu fiable pour
 # représenter un joueur sur la saison affichée -- un tout petit échantillon de matchs (ex: 4-11)
@@ -1080,19 +1083,6 @@ def _recompute_derived_stat_columns(df: pd.DataFrame, min_games: int = MIN_GAMES
     return df
 
 
-def _zscore_by_position(stat_source: pd.DataFrame, apply_to: pd.DataFrame, impact_col: str, stat_mask: pd.Series) -> pd.Series:
-    """Z-score de `impact_col` PAR GROUPE DE POSTE — moyenne/écart-type calculés sur
-    `stat_source[stat_mask]`, appliqués aux valeurs de `apply_to[impact_col]`/
-    `apply_to["position_group"]` — `apply_to` peut être le MÊME DataFrame que `stat_source` ou un
-    AUTRE (voir compute_radar_scores, seul appelant actuel : normalise un axe du radar de
-    comparaison par rapport aux joueurs du même poste, plutôt qu'en absolu)."""
-    group_stats = stat_source.loc[stat_mask].groupby("position_group")[impact_col].agg(["mean", "std"])
-    group_mean = apply_to["position_group"].map(group_stats["mean"])
-    group_std = apply_to["position_group"].map(group_stats["std"])
-    z = (apply_to[impact_col] - group_mean) / group_std
-    return z.replace([np.inf, -np.inf], np.nan)
-
-
 def _substitute_playoffs_only_stats(regular_enriched: pd.DataFrame, playoffs: pd.DataFrame) -> pd.DataFrame:
     """Remplace les colonnes de stats par leurs valeurs PLAYOFFS SEULES (pas de moyenne, pas de
     total) — pour period="playoffs". Un joueur absent de `playoffs` (n'a pas fait les playoffs
@@ -1692,31 +1682,6 @@ RADAR_AXES: list[dict] = [
 RADAR_CAVEATS: list[str] = [c for a in RADAR_AXES for c in a.get("caveats", [])]
 
 
-def _percentile_by_position(
-    stat_source: pd.DataFrame, apply_to: pd.DataFrame, impact_col: str, stat_mask: pd.Series
-) -> pd.Series:
-    """Rang percentile de `impact_col` PAR GROUPE DE POSTE — même principe et mêmes paramètres
-    que _zscore_by_position (même `stat_source`/`apply_to`/`stat_mask`), en rang plutôt qu'en
-    écart-type : pourcentage de joueurs de RÉFÉRENCE (même poste, lignes de `stat_source` où
-    `stat_mask` est vrai) que ce joueur égale ou dépasse sur cet axe. Calcul volontairement simple
-    (rang / effectif, via np.searchsorted) plutôt qu'une fonction de bibliothèque externe (évite
-    une dépendance à scipy pour un calcul déjà trivial avec numpy/pandas)."""
-    ref = stat_source.loc[stat_mask]
-    result = pd.Series(np.nan, index=apply_to.index, dtype=float)
-    for group, ref_group in ref.groupby("position_group"):
-        values = np.sort(ref_group[impact_col].dropna().to_numpy())
-        n = len(values)
-        if n == 0:
-            continue
-        in_group = apply_to["position_group"] == group
-        col_vals = apply_to.loc[in_group, impact_col]
-        valid = col_vals.notna()
-        idx = col_vals[valid].index
-        ranks = np.searchsorted(values, col_vals[valid].to_numpy(), side="right")
-        result.loc[idx] = ranks / n * 100
-    return result
-
-
 def compute_radar_scores(df: pd.DataFrame, period: PlayoffMode = "regular") -> pd.DataFrame:
     """Ajoute, pour chaque axe de RADAR_AXES, sur la même référence (population de `df` ayant
     joué au moins un seuil minimum de matchs, groupée par poste) :
@@ -1761,35 +1726,14 @@ def compute_radar_scores(df: pd.DataFrame, period: PlayoffMode = "regular") -> p
     if "position_group" in result.columns:
         for adj_col, (made_col, att_col, padding, min_per_game) in SHOOTING_PADDING.items():
             if {made_col, att_col} <= set(result.columns):
-                totals = result.groupby("position_group")[[made_col, att_col]].sum()
-                position_pct = result["position_group"].map(totals[made_col] / totals[att_col])
-                adjusted = (result[made_col] + padding * position_pct) / (result[att_col] + padding)
+                adjusted = padded_pct(result, made_col, att_col, padding)
                 per_game = result[att_col] / result["games_played"].where(result["games_played"] > 0)
                 result[adj_col] = adjusted.where((result[att_col] > 0) & (per_game >= min_per_game))
 
     if "position_group" not in result.columns:
         for axis in RADAR_AXES:
-            result[f"radar_{axis['key']}_z"] = np.nan
-            result[f"radar_{axis['key']}_score"] = np.nan
-            result[f"radar_{axis['key']}_percentile"] = np.nan
+            empty_axis(result, axis["key"])
         return result
 
     stat_mask = result["games_played"].fillna(0) >= min_games
-    temp_cols = []
-    for axis in RADAR_AXES:
-        col = axis.get("score_col", axis["stat_col"])
-        if col not in result.columns:
-            result[f"radar_{axis['key']}_z"] = np.nan
-            result[f"radar_{axis['key']}_score"] = np.nan
-            result[f"radar_{axis['key']}_percentile"] = np.nan
-            continue
-        z_col = col
-        if axis.get("invert"):
-            z_col = f"_radar_{axis['key']}_inverted"
-            result[z_col] = -result[col]
-            temp_cols.append(z_col)
-        z = _zscore_by_position(result, result, z_col, stat_mask)
-        result[f"radar_{axis['key']}_z"] = z
-        result[f"radar_{axis['key']}_score"] = (z.clip(-3, 3) + 3) / 6 * 100
-        result[f"radar_{axis['key']}_percentile"] = _percentile_by_position(result, result, z_col, stat_mask)
-    return result.drop(columns=temp_cols)
+    return score_axes(result, RADAR_AXES, stat_mask)
