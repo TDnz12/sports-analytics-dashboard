@@ -87,7 +87,7 @@ import streamlit as st
 
 from data_sources import SPORTS
 
-st.set_page_config(page_title="Effectifs — Sports Analytics", layout="wide")
+st.set_page_config(page_title="Effectifs · Sports Analytics", layout="wide")
 
 # Même bloc de densité que Dashboard.py / pages/1_Radar_de_comparaison.py (copié tel quel, voir
 # leur commentaire d'origine pour le détail de chaque règle) -- seul le texte du titre
@@ -411,7 +411,7 @@ if team_code:
         st.stop()
 
     team_name = identity[team_code][1] if team_code in identity else team_code
-    st.title(f"{team_name} — Effectif réel {season}")
+    st.title(f"{team_name} · Effectif réel {season}")
     st.caption(
         f"Tous les joueurs de l'équipe d'après les statistiques officielles de la saison régulière "
         f"{season}. Les modifications faites dans la grille (✕, ⇄, +) n'apparaissent pas ici."
@@ -434,7 +434,7 @@ if team_code:
             with player_cols[i % N_PLAYER_COLS]:
                 with st.container(border=True):
                     player_id = row.get("player_id")
-                    player_name = row.get("player", "—")
+                    player_name = row.get("player", "n.d.")
                     if pd.notna(player_id):
                         latest = HEADSHOT_URL_TEMPLATE.format(player_id=int(player_id))
                         photo_team_id = photo_team_ids.get(int(player_id))
@@ -1486,7 +1486,7 @@ function createGrid(host) {
     input.autocomplete = "off";
     input.spellcheck = false;
     const list = el("div", "mg-results");
-    panel.append(head, el("div", "mg-panel-caption", `${teamName(team)} — slot ${SLOT_LABELS[slot]}`), input, list);
+    panel.append(head, el("div", "mg-panel-caption", `${teamName(team)} · slot ${SLOT_LABELS[slot]}`), input, list);
     overlay.append(panel);
     root.append(overlay);
     search = { overlay, input, list, team, slot, results: [], active: 0 };
@@ -1857,7 +1857,7 @@ st.caption(
     "Clique sur le nom d'une équipe pour voir son effectif complet, ou refais les compositions "
     "avec ✕, ⇄ et +, ou en faisant glisser un joueur (appui long sur écran tactile)."
 )
-st.caption(f"Composition à 6 joueurs par équipe — saison régulière {season}.")
+st.caption(f"Composition à 6 joueurs par équipe, saison régulière {season}.")
 
 
 # Clé fixe (pas une clé par saison) : le composant n'est pas démonté au changement de saison, sa

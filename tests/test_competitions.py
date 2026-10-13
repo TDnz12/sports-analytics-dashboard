@@ -33,9 +33,31 @@ class RegistreTest(unittest.TestCase):
         self.assertEqual(rugby.label, "Rugby")
         self.assertEqual([c.key for c in rugby.competitions], ["top14", "prod2", "six_nations"])
         self.assertEqual([c.mode for c in rugby.competitions], ["club", "club", "international"])
-        # Lot 1 : rien n'est encore livré.
-        self.assertFalse(rugby.available)
-        self.assertFalse(any(c.available for c in rugby.competitions))
+        # Lot 4 : Top 14 et Pro D2 livrés, Six Nations au lot 8.
+        self.assertTrue(rugby.available)
+        self.assertEqual({c.key: c.available for c in rugby.competitions},
+                         {"top14": True, "prod2": True, "six_nations": False})
+        self.assertIsNotNone(rugby.get_player_stats)
+        # Pas encore de radar ni de classement des équipes (lot 6 et après la V1).
+        self.assertIsNone(rugby.compute_radar_scores)
+        self.assertIsNone(rugby.get_team_ranking)
+
+    def test_reglages_dashboard_nba_explicites(self):
+        nba = SPORTS["nba"]
+        self.assertEqual((nba.default_season, nba.default_x, nba.default_y, nba.default_color),
+                         ("2024-25", "salary_musd", "points_per_game", "pie"))
+        # Champs propres au rugby : vides pour la NBA, donc rendu historique.
+        for field in ("stats_periods", "show_low_sample_default", "player_label_col",
+                      "categorical_colors", "position_filter_col", "detail_lead_columns",
+                      "low_sample_label", "source_caption"):
+            self.assertIsNone(getattr(nba, field), field)
+
+    def test_defauts_rugby_dans_le_catalogue(self):
+        rugby = SPORTS["rugby"]
+        for key in (rugby.default_x, rugby.default_y):
+            self.assertIn(key, rugby.metrics)
+        self.assertIn(rugby.default_color, rugby.categorical_colors)
+        self.assertEqual(list(rugby.stats_periods.values()), ["all", "regular"])
 
 
 class SaisonsTest(unittest.TestCase):

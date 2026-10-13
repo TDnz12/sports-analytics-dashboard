@@ -1579,12 +1579,12 @@ def get_first_game_teams(season: str, force_refresh: bool = False) -> pd.DataFra
 # pourcentages nba_api sont des fractions, 0.6 pour 60 %).
 RADAR_STEALS_CAVEAT = (
     " Attention : \"Interceptions\" (steals) favorise structurellement les joueurs actifs sur le ballon "
-    "(arrières/ailiers qui multiplient les prises de risque défensives) — un intérieur qui "
+    "(arrières/ailiers qui multiplient les prises de risque défensives) : un intérieur qui "
     "défend par positionnement peut en avoir peu sans être un mauvais défenseur. Proxy "
     "box-score, pas une vraie mesure de qualité défensive individuelle (voir METHODOLOGY.md)."
 )
 RADAR_BLOCKS_CAVEAT = (
-    " Attention : \"Contres\" (blocks) favorise structurellement les intérieurs (proximité du cercle) — "
+    " Attention : \"Contres\" (blocks) favorise structurellement les intérieurs (proximité du cercle) : "
     "un extérieur qui en a peu n'est pas nécessairement moins bon défenseur, ce n'est simplement "
     "pas son registre. Proxy box-score, pas une vraie mesure de qualité défensive individuelle "
     "(voir METHODOLOGY.md)."

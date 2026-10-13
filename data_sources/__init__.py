@@ -91,6 +91,48 @@ class SportConfig:
     # du sport reçoivent competition=<clé> en argument nommé. Une compétition available=False est
     # affichée "bientôt disponible". None (NBA) : pas de sélecteur, comportement inchangé.
     competitions: Optional[list[CompetitionConfig]] = None
+    # --- Réglages du Dashboard propres au sport. Tous optionnels : None = valeur NBA historique,
+    # écrite en repli dans Dashboard.py, donc rendu NBA inchangé. ---
+    # stats_periods : {libellé : period} du sélecteur "Statistiques utilisées", le premier par
+    # défaut (et seul utilisé en mode "Toutes les saisons") ; None = saison régulière / playoffs.
+    stats_periods: Optional[dict] = None
+    # Défauts des sélecteurs (saison ; métriques en X, Y ; couleur, clé de métrique ou colonne de
+    # categorical_colors). None : saison la plus récente, 1re et 2e métriques, pas de couleur.
+    default_season: Optional[str] = None
+    default_x: Optional[str] = None
+    default_y: Optional[str] = None
+    default_color: Optional[str] = None
+    source_caption: Optional[str] = None      # encart "Sources" ; None = texte NBA
+    loading_label: Optional[str] = None       # texte du chargement ; None = texte NBA
+    # Curseurs des filtres avancés ; None = 40 min par match (défaut 8) et 82 matchs.
+    minutes_slider_max: Optional[float] = None
+    minutes_slider_default: Optional[float] = None
+    games_slider_max: Optional[int] = None
+    # Seuil "échantillon court" en clair (ex. "moins de 5 matchs ou 520 minutes") ; None = texte NBA.
+    low_sample_label: Optional[str] = None
+    # Case "Afficher les échantillons courts" et sa valeur par défaut ; None = pas de case, les
+    # échantillons courts restent affichés en losange (NBA).
+    show_low_sample_default: Optional[bool] = None
+    # Colonne du nom affiché et recherché (homonymes : "Nom (Club)") ; None = "player".
+    player_label_col: Optional[str] = None
+    # Colonnes catégorielles proposées dans "Colorer selon", {colonne : libellé} ; None = équipe.
+    categorical_colors: Optional[dict] = None
+    # Couleurs fixes de ces colonnes, {colonne : {valeur : couleur}}, dans l'ordre de la légende ;
+    # None = couleurs attribuées par plotly dans l'ordre d'apparition.
+    category_colors: Optional[dict] = None
+    # False : légende réduite aux couleurs, sans les entrées "Échantillon normal / court" (le
+    # losange reste expliqué sous le graph) ; None = légende NBA.
+    legend_symbols: Optional[bool] = None
+    # True : pourcentages en "10 %" sur les axes et dans l'infobulle, tableau détaillé en virgule
+    # décimale ; None = formats NBA.
+    french_format: Optional[bool] = None
+    # Filtre par poste des filtres avancés (colonne, ordre des options) ; None = pas de filtre.
+    position_filter_col: Optional[str] = None
+    position_order: Optional[list] = None
+    # Tableau détaillé : {colonne : en-tête} avant et après les métriques choisies ; None = tableau
+    # NBA (nom, équipe, métriques, matchs, échantillon, sans renommage).
+    detail_lead_columns: Optional[dict] = None
+    detail_tail_columns: Optional[dict] = None
 
 
 # --- Sport actif ---------------------------------------------------------
@@ -114,12 +156,58 @@ NBA = SportConfig(
     get_mercato_lineup=nba.get_mercato_lineup,
     get_team_identity=nba.get_team_identity,
     get_first_game_teams=nba.get_first_game_teams,
+    # "2024-25" (pas la saison la plus récente) : décision explicite, temporaire. Le dataset
+    # Kaggle ratin21 ne couvre pas encore 2025-26 (100 % des salaires y sont un repli sur la
+    # saison précédente, voir l'avertissement dynamique du Dashboard et METHODOLOGY.md). À
+    # repasser sur la plus récente une fois ratin21 mis à jour.
+    default_season="2024-25",
+    default_x="salary_musd",
+    default_y="points_per_game",
+    # PIE : 3e dimension analytique (impact global du joueur) en dégradé continu, plus lisible
+    # qu'un nuage à 30 couleurs par équipe.
+    default_color="pie",
+)
+
+# Rugby : performance uniquement, sans salaires. Top 14 et Pro D2 livrés (lot 4), Six Nations
+# "bientôt disponible". Radar et classement des équipes pas encore branchés (None). Voir
+# data_sources/rugby/.
+RUGBY = SportConfig(
+    key="rugby",
+    label="Rugby",
+    available=True,
+    get_player_stats=rugby.get_player_stats,
+    metrics=rugby.METRICS,
+    competitions=rugby.COMPETITIONS,
+    stats_periods=rugby.STATS_PERIODS,
+    default_x="tackles_per80",
+    default_y="metres_per80",
+    default_color="position_family",
+    source_caption=rugby.SOURCE_CAPTION,
+    loading_label="Chargement des données rugby...",
+    minutes_slider_max=80.0,
+    minutes_slider_default=0.0,
+    # Pro D2 : 30 journées et 3 matchs de phases finales au plus.
+    games_slider_max=34,
+    low_sample_label=rugby.LOW_SAMPLE_LABEL,
+    show_low_sample_default=False,
+    player_label_col="player_label",
+    categorical_colors={
+        "position_family": "Famille de poste (avants / arrières)",
+        "position_group": "Poste",
+        "team": "Équipe",
+    },
+    category_colors={"position_family": {
+        "Avants": "#1f77b4", "Arrières": "#d62728", "Indéterminé": "#9e9e9e",
+    }},
+    legend_symbols=False,
+    french_format=True,
+    position_filter_col="position_group",
+    position_order=rugby.POSITION_FILTER_ORDER,
+    detail_lead_columns=rugby.DETAIL_LEAD_COLUMNS,
+    detail_tail_columns=rugby.DETAIL_TAIL_COLUMNS,
 )
 
 # --- Sports à venir (aucune implémentation, juste affichés "bientôt") ----
-# Rugby : déclaré avec ses compétitions, encore indisponible tant qu'aucune n'est livrée
-# (performance uniquement, sans salaires). Voir data_sources/rugby/.
-RUGBY = SportConfig(key="rugby", label="Rugby", available=False, competitions=rugby.COMPETITIONS)
 MMA = SportConfig(key="mma", label="MMA", available=False)
 TENNIS = SportConfig(key="tennis", label="Tennis", available=False)
 

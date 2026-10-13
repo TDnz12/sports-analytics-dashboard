@@ -23,7 +23,7 @@ import streamlit as st
 
 from data_sources import SPORTS
 
-st.set_page_config(page_title="Radar de comparaison — Sports Analytics", layout="wide")
+st.set_page_config(page_title="Radar de comparaison · Sports Analytics", layout="wide")
 
 # Même bloc de densité que Dashboard.py (voir son commentaire d'origine) — dupliqué ici pour que cette
 # page ait la même respiration visuelle que le dashboard principal, sans dépendre de Dashboard.py.
@@ -210,10 +210,10 @@ players = st.sidebar.multiselect(
 if preselected_player and preselected_player not in player_options:
     st.info(
         f"**{preselected_player}** n'a pas de données exploitables pour {season} "
-        f"({stats_period_label}) — sélectionne une autre saison ou un autre joueur."
+        f"({stats_period_label}) : sélectionne une autre saison ou un autre joueur."
     )
 
-st.title(f"Radar de comparaison — {season}")
+st.title(f"Radar de comparaison · {season}")
 
 # Toggle Indice / Centile (inspiré de Data'Scout) : les deux lisent les colonnes déjà calculées
 # par compute_radar_scores (radar_<key>_score / radar_<key>_percentile), même référence (poste +
@@ -276,7 +276,7 @@ def _player_card(column, player_name: str, color: str) -> None:
             n_games = int(round(games))
             games_txt = f"{n_games} match" if n_games < 2 else f"{n_games} matchs"
         else:
-            games_txt = "—"
+            games_txt = "n.d."
         st.markdown(
             f"""<div style="border-left: 4px solid {color}; padding: 0.3rem 0.9rem;">
             <div style="font-weight: 600; font-size: 1.05rem;">{player_name}</div>
@@ -303,13 +303,13 @@ def _format_raw(axis: dict, row: pd.Series) -> str:
     """Valeur réelle d'un axe au format de RADAR_AXES["fmt"] (les pourcentages nba_api sont des
     fractions, 0.152 pour 15,2 %), suivie du nombre de tentatives entre parenthèses pour les axes
     de tir ("88.7% (669 tent.)"), ou seulement "0 tent." sans aucune tentative (le pourcentage
-    n'a alors pas de sens). "—" si manquante. Même texte au survol et dans le tableau."""
+    n'a alors pas de sens). "n.d." si manquante. Même texte au survol et dans le tableau."""
     value = row.get(axis["stat_col"])
     attempts = row.get(axis["attempts_col"]) if "attempts_col" in axis else None
     if attempts is not None and not pd.isna(attempts) and attempts == 0:
         return "0 tent."
     if pd.isna(value):
-        return "—"
+        return "n.d."
     text = axis.get("fmt", "{:.1f}").format(value)
     return text if attempts is None or pd.isna(attempts) else f"{text} ({attempts:.0f} tent.)"
 
@@ -418,12 +418,12 @@ for i, player_name in enumerate(players):
         # Axe de tir vide (zéro tentative ou volume sous le seuil) : valeur réelle suivie de "NC"
         # (non classé) à la place du score, ex. "0.0% (4 tent.)  ·  NC" ou "0 tent.  ·  NC".
         # "—" reste réservé à une donnée réellement absente.
-        if raw == "—":
-            cell = "—"
+        if raw == "n.d.":
+            cell = "n.d."
         elif pd.notna(score):
             cell = f"{raw}  ·  {score:.0f}{score_unit}"
         else:
-            cell = f"{raw}  ·  " + ("NC" if "attempts_col" in a else "—")
+            cell = f"{raw}  ·  " + ("NC" if "attempts_col" in a else "n.d.")
         recap_row[a["label"]] = cell + RECAP_CELL_END_MARGIN
     recap_rows.append(recap_row)
 
@@ -485,11 +485,11 @@ st.caption(
     "Chaque axe est un z-score par poste (Intérieur / Ailier / Extérieur) : la position du "
     "joueur est mesurée par rapport aux autres joueurs de référence au même poste, pas à "
     "l'ensemble de la ligue." + (
-        " Affiché ici mis à l'échelle 0-100 pour la lecture (clip à ±3 écarts-types) — 50 = dans "
+        " Affiché ici mis à l'échelle 0-100 pour la lecture (clip à ±3 écarts-types) : 50 = dans "
         "la moyenne des joueurs à son poste sur cet axe."
         if display_mode == "Indice" else
         " Affiché ici en rang percentile direct (rang / effectif) dans la même population de "
-        "référence — 90 = ce joueur fait mieux que 90% des joueurs de référence à son poste."
+        "référence : 90 = ce joueur fait mieux que 90% des joueurs de référence à son poste."
     )
 )
 
@@ -503,7 +503,7 @@ for caveat in (sport.radar_caveats or []):
 if stats_period == "playoffs":
     st.caption(
         " Note : population de référence (poste + saison) construite avec un seuil de 4 matchs "
-        "minimum en playoffs (contre 15 en saison régulière) — 15 serait structurellement "
+        "minimum en playoffs (contre 15 en saison régulière) : 15 serait structurellement "
         "intenable ici (le maximum réellement jouable en playoffs tourne autour de 22-23 "
         "matchs), voir Dashboard.py pour la mesure d'impact complète."
     )

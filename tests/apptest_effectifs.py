@@ -111,7 +111,7 @@ w.json_trigger_value = json.dumps([{"event": "open_team", "value": "BOS"}])
 at._run(widget_state=ws)
 assert not at.exception, at.exception
 assert dict(at.query_params) == {"saison": ["2024-25"], "equipe": ["BOS"]}, dict(at.query_params)
-assert at.title[0].value == "Boston Celtics — Effectif réel 2024-25", at.title[0].value
+assert at.title[0].value == "Boston Celtics · Effectif réel 2024-25", at.title[0].value
 assert not list(find(at._tree, "bidi_component")), "grille encore affichée"
 ok("déclencheur open_team -> adresse ?saison=2024-25&equipe=BOS et vue effectif réel")
 
@@ -141,7 +141,7 @@ ok("effectif réel = équipe du dernier match (Bane à MEM, pas à ORL, en 2024-
 
 # 5. Franchise historique : Seattle 2004-05 (vide dans l'ancienne page Rosters)
 at = new({"saison": "2004-05", "equipe": "SEA"})
-assert not at.exception and at.title[0].value == "Seattle SuperSonics — Effectif réel 2004-05"
+assert not at.exception and at.title[0].value == "Seattle SuperSonics · Effectif réel 2004-05"
 assert len(names(at)) > 0 and logos(at) == ["app/static/logos/nba/2001_seattle-supersonics.png"], logos(at)
 assert at.caption[-1].value == LOGO_NOTICE, "mention des logos absente en bas de la vue effectif"
 assert logos(new({"saison": "2024-25", "equipe": "BOS"})) == ["app/static/logos/nba/1996_boston-celtics.svg"]

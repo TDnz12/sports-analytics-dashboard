@@ -46,6 +46,15 @@ class Metric:
     label: str           # libellé affiché dans l'UI
     fmt: str = ",.1f"    # format d'affichage (style Python format-spec)
     category: str = "Volume"  # regroupement dans l'UI: Volume / Efficacité / Salaire
+    # Champs optionnels (rugby), vides pour la NBA : comportement inchangé.
+    # made_col / attempts_col : réussis et tentatives d'un pourcentage, pour le détail
+    # "78 % (52/67)" dans l'infobulle et le tableau. min_attempts : sous ce volume sur la saison,
+    # "NC" (non classé) dans le tableau et point retiré du graph quand la métrique est en X ou Y.
+    made_col: str | None = None
+    attempts_col: str | None = None
+    min_attempts: int | None = None
+    # True : "peu fiable sur une saison" (mention dans le sélecteur, l'infobulle et sous le graph).
+    unreliable: bool = False
 
 
 @dataclass(frozen=True)

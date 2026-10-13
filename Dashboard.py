@@ -150,6 +150,35 @@ st.markdown(
 # commentaire CSS de stLogoSpacer plus haut) pour gagner une ligne entière de hauteur.
 
 sport_keys = list(SPORTS.keys())
+
+
+def _reset_season() -> None:
+    # Changement de sport ou de compétition : les saisons proposées ne sont plus les mêmes
+    # ("2024-25" contre "2026"). On oublie la saison mémorisée ; le script la réécrit ensuite
+    # explicitement à la saison par défaut avant de créer le sélecteur (voir set_widget_default).
+    st.session_state.pop("main_season", None)
+
+
+def set_widget_default(key: str, value, valid=None) -> None:
+    """Écrit la valeur d'un widget à clé dans st.session_state avant sa création, si elle manque
+    (ou n'est plus une option valide). Retirer la clé ne suffit pas : Streamlit renvoie alors bien
+    la valeur par défaut au script, mais n'ordonne pas au navigateur de mettre le widget à jour
+    (même clé, donc même widget), qui garde l'ancienne valeur affichée (bug vu en passant du
+    Top 14 "Toutes les saisons" au Pro D2). Une valeur écrite par l'API Session State, elle, est
+    poussée au navigateur. Le widget est alors créé sans `value=` / `index=` (sinon Streamlit
+    avertit d'un double réglage)."""
+    if key not in st.session_state or (valid is not None and st.session_state[key] not in valid):
+        st.session_state[key] = value
+
+
+def _reset_sport_state() -> None:
+    # Changement de sport : en plus de la saison, les curseurs gardent sinon la valeur choisie
+    # pour l'autre sport (8 min par match en NBA, 0 en rugby).
+    _reset_season()
+    for key in ("min_minutes", "min_games", "show_low_sample"):
+        st.session_state.pop(key, None)
+
+
 # selectbox (pas radio) : un radio à une option par sport (dont la plupart pas encore
 # disponibles, juste là pour annoncer la suite) prenait une ligne de hauteur par sport dans une
 # sidebar déjà chargée -- retour utilisateur : ça poussait les sélecteurs d'axes (X/Y), bien plus
@@ -158,45 +187,66 @@ sport_keys = list(SPORTS.keys())
 sport_choice_key = st.sidebar.selectbox(
     "Sport",
     options=sport_keys,
-    format_func=lambda k: SPORTS[k].label if SPORTS[k].available else f"{SPORTS[k].label} — bientôt disponible",
+    format_func=lambda k: SPORTS[k].label if SPORTS[k].available else f"{SPORTS[k].label} (bientôt disponible)",
     index=0,
+    on_change=_reset_sport_state,
 )
 sport = SPORTS[sport_choice_key]
 
 if not sport.available:
-    st.sidebar.info("Ce sport n'est pas encore disponible dans le MVP.")
+    st.sidebar.info("Ce sport n'est pas encore disponible.")
     st.title(f"{sport.label}")
     st.info(
-        "Ce sport arrive dans une prochaine version. "
-        "Seul **Basketball (NBA)** est actif pour l'instant. "
-        "L'architecture du projet (`data_sources/<sport>.py`) est déjà prête à l'accueillir."
+        "Ce sport arrive dans une prochaine version. Sports actifs pour l'instant : "
+        + ", ".join(f"**{s.label}**" for s in SPORTS.values() if s.available) + "."
     )
     st.stop()
 
-# Vue combinée : charge et concatène TOUTES les saisons de sport.seasons (1996-97 ->
-# 2025-26, voir data_sources/nba.SEASONS) plutôt qu'une seule. Repose sur les deux sources
+# Sélecteur "Compétition" (rugby : Top 14, Pro D2, Six Nations), seulement pour un sport qui en
+# déclare (sport.competitions, None pour la NBA : pas de sélecteur). Les saisons proposées sont
+# alors celles de la compétition choisie, et les fonctions du sport reçoivent competition=<clé>.
+competition = None
+if sport.competitions:
+    _competitions = {c.key: c for c in sport.competitions}
+    competition_key = st.sidebar.selectbox(
+        "Compétition",
+        options=list(_competitions),
+        format_func=lambda k: _competitions[k].label if _competitions[k].available
+        else f"{_competitions[k].label} (bientôt disponible)",
+        key="main_competition",
+        on_change=_reset_season,
+    )
+    competition = _competitions[competition_key]
+    if not competition.available:
+        st.title(f"{sport.label} · {competition.label}")
+        st.info(
+            f"{competition.label} arrive dans une prochaine version. Compétitions disponibles : "
+            + ", ".join(f"**{c.label}**" for c in sport.competitions if c.available) + "."
+        )
+        st.stop()
+seasons = competition.seasons if competition else sport.seasons
+competition_key = competition.key if competition else None
+
+# Vue combinée : charge et concatène TOUTES les saisons (NBA : 1996-97 -> 2025-26, voir
+# data_sources/nba.SEASONS) plutôt qu'une seule. Repose sur les deux sources
 # de salaires documentées dans data_sources/nba.py (ratin21 pour 2010-11+, dataset CC0
-# "legacy" avant, frontière à NBA_SALARY_CAP_BY_SEASON/RATIN21_DATASET_START_YEAR) —
+# "legacy" avant, frontière à NBA_SALARY_CAP_BY_SEASON/RATIN21_DATASET_START_YEAR) :
 # transparent ici, le DataFrame retourné par get_player_stats a le même schéma quelle que
 # soit la source. Un échec ponctuel sur une saison (réseau, dataset absent...) n'empêche pas
 # d'afficher les autres, voir failed_seasons plus bas.
-ALL_SEASONS_LABEL = f"Toutes les saisons ({sport.seasons[-1]} → {sport.seasons[0]})"
-ALL_SEASONS_KEYS = list(sport.seasons)
+ALL_SEASONS_LABEL = f"Toutes les saisons ({seasons[-1]} → {seasons[0]})"
+ALL_SEASONS_KEYS = list(seasons)
 
-season_options = [ALL_SEASONS_LABEL] + sport.seasons
-# "2024-25" (pas la saison la plus récente de sport.seasons) : décision explicite, temporaire --
-# le dataset Kaggle ratin21 ne couvre pas encore 2025-26 (100% des salaires y sont un repli sur
-# la saison précédente, voir le st.warning dynamique plus bas et METHODOLOGY.md). À repasser sur
-# la plus récente une fois ratin21 mis à jour ; sport.seasons[0] reste la plus récente couverte
-# par nba_api (stats de jeu), toujours sélectionnable manuellement dans ce sélecteur entre-temps.
-_default_season = "2024-25" if "2024-25" in sport.seasons else sport.seasons[0]
-# key="main_season" (en plus de index=) : permet à d'autres pages (ex. pages/2_Effectifs.py) de
+season_options = [ALL_SEASONS_LABEL] + seasons
+# Saison par défaut : sport.default_season (NBA : "2024-25", voir son commentaire dans
+# data_sources/__init__.py), sinon la plus récente.
+_default_season = sport.default_season if sport.default_season in seasons else seasons[0]
+# key="main_season" : permet à d'autres pages (ex. pages/2_Effectifs.py) de
 # lire la saison actuellement affichée ici via st.session_state.get("main_season") et de s'y
 # aligner par défaut, sans mécanisme de navigation dédié -- même session_state partagé que le
 # reste de l'app (voir radar_preselect_season plus bas pour le même principe).
-season = st.sidebar.selectbox(
-    "Saison", options=season_options, index=season_options.index(_default_season), key="main_season"
-)
+set_widget_default("main_season", _default_season, valid=season_options)
+season = st.sidebar.selectbox("Saison", options=season_options, key="main_season")
 is_all_seasons = season == ALL_SEASONS_LABEL
 
 # Statistiques utilisées (saison régulière / playoffs uniquement) : n'affecte QUE le scatter plot
@@ -217,23 +267,38 @@ is_all_seasons = season == ALL_SEASONS_LABEL
 # Défaut = "Saison régulière" (repassée en premier/par défaut après le retrait du mode combiné,
 # qui l'avait temporairement remplacée). Même dict et même défaut dupliqués dans
 # pages/1_Radar_de_comparaison.py (voir sa docstring) -- à resynchroniser à la main si cet ordre
-# change à nouveau.
-STATS_PERIOD_OPTIONS = {
+# change à nouveau. Un autre sport fournit ses propres périodes (sport.stats_periods, rugby :
+# saison complète / phase régulière), la première étant le défaut.
+STATS_PERIOD_OPTIONS = sport.stats_periods or {
     "Saison régulière": "regular",
     "Playoffs uniquement": "playoffs",
 }
+_default_period = next(iter(STATS_PERIOD_OPTIONS.values()))
 if not is_all_seasons:
     stats_period_label = st.sidebar.selectbox(
         "Statistiques utilisées", options=list(STATS_PERIOD_OPTIONS.keys()), index=0,
     )
     stats_period = STATS_PERIOD_OPTIONS[stats_period_label]
 else:
-    stats_period = "regular"
+    stats_period = _default_period
 
 
-@st.cache_data(show_spinner="Chargement des données NBA (nba_api + Kaggle)...")
-def load_data(sport_key: str, season: str, period: str = "regular") -> pd.DataFrame:
-    return SPORTS[sport_key].get_player_stats(season, period=period)
+# La compétition fait partie de la clé de cache (None pour la NBA, dont get_player_stats ne reçoit
+# alors aucun argument competition). Texte du chargement propre au sport (sport.loading_label) :
+# st.cache_data appliqué ici plutôt qu'en décorateur pour le lui passer ; il ne s'affiche, comme
+# avant, que lors d'un vrai calcul, pas quand le résultat est déjà en cache.
+def _get_player_stats(sport_key: str, competition_key: str | None, season: str, period: str) -> pd.DataFrame:
+    kwargs = {"competition": competition_key} if competition_key else {}
+    return SPORTS[sport_key].get_player_stats(season, period=period, **kwargs)
+
+
+_load_data_cached = st.cache_data(
+    show_spinner=sport.loading_label or "Chargement des données NBA (nba_api + Kaggle)..."
+)(_get_player_stats)
+
+
+def load_data(sport_key: str, season: str, period: str) -> pd.DataFrame:
+    return _load_data_cached(sport_key, competition_key, season, period)
 
 
 @st.cache_data(show_spinner="Chargement du classement des équipes...")
@@ -249,10 +314,10 @@ if is_all_seasons:
     failed_seasons = []
     for s in ALL_SEASONS_KEYS:
         try:
-            # period="regular" explicite (== stats_period ici de toute façon, voir plus haut) :
-            # le mode "Toutes les saisons" n'a pas le sélecteur playoffs, uniquement de la saison
-            # régulière.
-            frames.append(load_data(sport.key, s, "regular"))
+            # Période par défaut du sport (== stats_period ici de toute façon, voir plus haut) :
+            # le mode "Toutes les saisons" n'a pas le sélecteur de période (NBA : saison
+            # régulière seule ; rugby : saison complète).
+            frames.append(load_data(sport.key, s, _default_period))
         except Exception as exc:  # nba_api down, pas d'internet, dataset Kaggle absent, etc.
             failed_seasons.append((s, exc))
     if not frames:
@@ -297,9 +362,26 @@ df["_awards"] = (
 )
 
 
+UNRELIABLE_TXT = "peu fiable sur une saison"
+
+
 def metric_label(key: str) -> str:
     m = metrics[key]
-    return f"{m.label}  ·  {m.category}"
+    return f"{m.label}  ·  {m.category}" + (f" ({UNRELIABLE_TXT})" if m.unreliable else "")
+
+
+def _default_index(options: list, preferred, fallback: int) -> int:
+    return options.index(preferred) if preferred in options else min(fallback, len(options) - 1)
+
+
+# Nom affiché, recherché et surligné : sport.player_label_col ("Nom (Club)" pour les homonymes
+# en rugby), "player" par défaut.
+label_col = sport.player_label_col or "player"
+# Colonnes catégorielles de "Colorer selon" ({colonne : libellé}) : l'équipe par défaut, plus la
+# famille de poste et le poste en rugby.
+categorical_colors = {
+    c: lbl for c, lbl in (sport.categorical_colors or {"team": "Équipe"}).items() if c in df.columns
+}
 
 
 # Ordre de la sidebar (revu -- retour utilisateur, version précédente avait les axes X/Y sous la
@@ -311,22 +393,19 @@ def metric_label(key: str) -> str:
 st.sidebar.markdown("---")
 x_key = st.sidebar.selectbox(
     "Statistique en abscisse (X)", options=metric_keys, format_func=metric_label,
-    index=metric_keys.index("salary_musd") if "salary_musd" in metric_keys else 0,
+    index=_default_index(metric_keys, sport.default_x, 0),
 )
 y_key = st.sidebar.selectbox(
     "Statistique en ordonnée (Y)", options=metric_keys, format_func=metric_label,
-    index=metric_keys.index("points_per_game") if "points_per_game" in metric_keys else 1,
+    index=_default_index(metric_keys, sport.default_y, 1),
 )
 
-color_options = ["Aucune"] + metric_keys + (["team"] if "team" in df.columns else [])
-# PIE par défaut : ajoute une vraie 3e dimension analytique (impact global du joueur) en plus
-# des axes salaire/points déjà affichés, via un dégradé continu -- plus lisible qu'un nuage à
-# 30+ couleurs par équipe qui n'apporte pas d'information analytique en soi.
-default_color = "pie" if "pie" in color_options else ("team" if "team" in color_options else "Aucune")
+color_options = ["Aucune"] + metric_keys + list(categorical_colors)
+# Couleur par défaut : sport.default_color (NBA : PIE, rugby : famille de poste), sinon aucune.
 color_key = st.sidebar.selectbox(
     "Colorer selon", options=color_options,
-    format_func=lambda k: "Aucune" if k == "Aucune" else ("Équipe" if k == "team" else metric_label(k)),
-    index=color_options.index(default_color),
+    format_func=lambda k: "Aucune" if k == "Aucune" else categorical_colors.get(k) or metric_label(k),
+    index=_default_index(color_options, sport.default_color, 0),
 )
 
 size_options = ["Aucune"] + metric_keys
@@ -338,7 +417,7 @@ size_key = st.sidebar.selectbox(
 )
 
 st.sidebar.markdown("---")
-player_options = ["Aucun"] + sorted(df["player"].dropna().unique().tolist())
+player_options = ["Aucun"] + sorted(df[label_col].dropna().unique().tolist())
 searched_player = st.sidebar.selectbox(
     "Rechercher un joueur",
     options=player_options,
@@ -357,7 +436,9 @@ def _handle_radar_click() -> None:
     st.switch_page("pages/1_Radar_de_comparaison.py")
 
 
-if searched_player != "Aucun":
+# Bouton masqué pour un sport sans radar (rugby jusqu'au lot 6) : la page radar n'affiche que la
+# NBA, elle recevrait un joueur qu'elle ne connaît pas.
+if searched_player != "Aucun" and sport.compute_radar_scores is not None:
     st.sidebar.button(
         "Voir le profil radar", on_click=_handle_radar_click,
         help="Ouvre la vue radar de comparaison de profils avec ce joueur pré-sélectionné.",
@@ -366,28 +447,65 @@ if searched_player != "Aucun":
 # Filtres avancés repliés (équipe, seuils minutes/matchs, salaires estimés) -- voir le
 # commentaire d'ordre de la sidebar plus haut. expanded=False : replié par défaut, l'utilisateur
 # l'ouvre seulement s'il en a besoin ce jour-là.
+# Case "Afficher les échantillons courts" (sport.show_low_sample_default renseigné, rugby :
+# décochée par défaut) : masque du graph les joueurs sous le seuil interne, le tableau détaillé
+# les garde. NBA (None) : pas de case, ils restent affichés en losange.
+show_low_sample = True
+if sport.show_low_sample_default is not None:
+    set_widget_default("show_low_sample", sport.show_low_sample_default)
+    show_low_sample = st.sidebar.checkbox(
+        "Afficher les échantillons courts", key="show_low_sample",
+        help=f"Joueurs avec {sport.low_sample_label} sur la saison : masqués du graph par défaut, "
+             "toujours présents dans le tableau détaillé.",
+    )
+
 with st.sidebar.expander("Filtres avancés"):
     teams = sorted(df["team"].dropna().unique().tolist())
     team_filter = st.multiselect("Filtrer par équipe (optionnel)", options=teams)
 
+    position_filter = []
+    if sport.position_filter_col and sport.position_filter_col in df.columns:
+        _present = set(df[sport.position_filter_col].dropna())
+        _order = sport.position_order or sorted(_present)
+        position_filter = st.multiselect(
+            "Filtrer par poste (optionnel)", options=[p for p in _order if p in _present],
+        )
+
     st.markdown("---")
+    set_widget_default(
+        "min_minutes", sport.minutes_slider_default if sport.minutes_slider_default is not None else 8.0
+    )
     min_minutes = st.slider(
         "Minutes par match minimum (filtrer le bruit \"garbage time\")",
-        min_value=0.0, max_value=40.0, value=8.0, step=1.0, key="min_minutes",
+        min_value=0.0, max_value=sport.minutes_slider_max or 40.0,
+        step=1.0, key="min_minutes",
     )
     # Seuil interne mentionné dans le help ci-dessous : 15 matchs en saison régulière
     # (MIN_GAMES_FOR_FIT), mais 4 en playoffs (MIN_GAMES_FOR_FIT_PLAYOFFS, voir son commentaire dans
     # data_sources/nba.py pour pourquoi 15 y est intenable) -- texte dynamique selon stats_period
     # (déjà connu à ce stade du script) plutôt qu'un nombre en dur qui serait faux la moitié du temps.
-    _internal_threshold_txt = "4 matchs en playoffs" if stats_period == "playoffs" else "15 matchs en saison régulière"
+    # Autre sport : son seuil en clair (sport.low_sample_label).
+    if sport.low_sample_label:
+        _internal_threshold_txt = sport.low_sample_label
+    else:
+        _internal_threshold_txt = (
+            "4 matchs en playoffs" if stats_period == "playoffs" else "15 matchs en saison régulière"
+        ) + ", voir data_sources/nba.py"
+    _low_sample_visibility_txt = (
+        "les joueurs sous ce seuil sont visibles par défaut (losange creux dans le graph, "
+        "échantillon court), à toi de décider si tu veux les masquer."
+        if sport.show_low_sample_default is None else
+        "les joueurs sous ce seuil se masquent ou s'affichent avec la case « Afficher les "
+        "échantillons courts »."
+    )
+    set_widget_default("min_games", 0)
     min_games = st.slider(
         "Nombre de matchs joués minimum",
-        min_value=0, max_value=82, value=0, step=1, key="min_games",
+        min_value=0, max_value=sport.games_slider_max or 82, step=1, key="min_games",
         help=(
             "Filtre uniquement l'affichage (graph + tableau). Un seuil interne "
-            f"({_internal_threshold_txt}, voir data_sources/nba.py) est indépendant de ce curseur — "
-            "les joueurs sous ce seuil sont visibles par défaut (losange creux dans le "
-            "graph, échantillon court), à toi de décider si tu veux les masquer."
+            f"({_internal_threshold_txt}) est indépendant de ce curseur : "
+            + _low_sample_visibility_txt
         ),
     )
 
@@ -396,7 +514,7 @@ with st.sidebar.expander("Filtres avancés"):
     if n_estimated:
         st.markdown("---")
         include_estimated_salary = st.checkbox(
-            f"Inclure les salaires estimés (année proche) — {n_estimated} joueur(s)",
+            f"Inclure les salaires estimés (année proche) : {n_estimated} joueur(s)",
             value=True,
             help=(
                 "Le dataset Kaggle n'a pas de ligne salaire pour l'année exacte de tous les "
@@ -416,10 +534,39 @@ if "games_played" in plot_df.columns:
     plot_df = plot_df[plot_df["games_played"].fillna(0) >= min_games]
 if team_filter:
     plot_df = plot_df[plot_df["team"].isin(team_filter)]
+if position_filter:
+    plot_df = plot_df[plot_df[sport.position_filter_col].isin(position_filter)]
 if not include_estimated_salary and "salary_is_estimated" in plot_df.columns:
     estimated_mask = plot_df["salary_is_estimated"].fillna(False)
     salary_cols = [c for c in ("salary", "salary_musd", "salary_pct_cap") if c in plot_df.columns]
     plot_df.loc[estimated_mask, salary_cols] = pd.NA
+
+
+def nc_mask(frame: pd.DataFrame, key: str) -> pd.Series:
+    """Lignes "NC" (non classé) d'une métrique à seuil de tentatives (Metric.min_attempts) : un
+    pourcentage existe mais repose sur trop peu de tentatives. Toujours faux sinon (NBA)."""
+    m = metrics.get(key)
+    if m is None or m.min_attempts is None:
+        return pd.Series(False, index=frame.index)
+    return frame[key].notna() & (frame[m.attempts_col] < m.min_attempts)
+
+
+# Tableau détaillé (sport.detail_lead_columns renseigné, rugby) : tous les joueurs des filtres,
+# échantillons courts et "NC" compris, sans les seules valeurs X / Y réellement absentes.
+table_base_df = plot_df.dropna(subset=[x_key, y_key])
+
+# Échantillons courts masqués du graph (case décochée), comptés pour la mention sous le graph.
+n_low_sample_hidden = 0
+if not show_low_sample and "low_sample_size" in plot_df.columns:
+    _low = plot_df["low_sample_size"].fillna(False).astype(bool)
+    n_low_sample_hidden = int(plot_df.loc[_low].dropna(subset=[x_key, y_key]).shape[0])
+    plot_df = plot_df[~_low]
+
+# "NC" en X ou en Y : point retiré du graph (pourcentage sur trop peu de tentatives), compté pour
+# la mention sous le graph.
+_nc_xy = (nc_mask(plot_df, x_key) | nc_mask(plot_df, y_key)) & plot_df[[x_key, y_key]].notna().all(axis=1)
+n_nc_hidden = int(_nc_xy.sum())
+plot_df = plot_df[~_nc_xy]
 plot_df = plot_df.dropna(subset=[x_key, y_key])
 
 x_meta, y_meta = metrics[x_key], metrics[y_key]
@@ -428,15 +575,15 @@ x_meta, y_meta = metrics[x_key], metrics[y_key]
 # --------------------------------------------------------------------------
 # Contenu principal
 # --------------------------------------------------------------------------
-st.title(f"{sport.label} — {season}")
+st.title(" · ".join([sport.label] + ([competition.label] if competition else []) + [season]))
 
 # Texte de méthodologie/sources — calculé ici mais affiché plus bas dans un expander replié,
 # pour que le graph suive le titre sans texte interposé.
-data_sources_caption = (
+data_sources_caption = sport.source_caption or (
     "Stats de jeu : `nba_api` (stats.nba.com, live)  ·  Salaire & PER : dataset Kaggle "
     "ratin21/nba-player-stats-and-salaries-2010-2025 pour 2010-11 et après, complété par le "
     "dataset CC0 iampunitkmryh/nba-players-details-198518 pour 1996-97→2009-10 "
-    "(les deux sourcés de Basketball-Reference / HoopsHype — voir `data_sources/nba.py` pour la "
+    "(les deux sourcés de Basketball-Reference / HoopsHype, voir `data_sources/nba.py` pour la "
     "frontière exacte)  ·  Salaire aussi disponible normalisé en % du plafond salarial officiel "
     "de la saison (`data_sources/nba.NBA_SALARY_CAP_BY_SEASON`), pour rester comparable entre "
     "saisons malgré la forte hausse du plafond dans le temps  ·  Données mises en cache "
@@ -452,7 +599,7 @@ data_sources_caption = (
 PLAYOFF_PACE_CAVEAT = (
     " Attention : écart de rythme de jeu saison régulière / playoffs : les playoffs se jouent à un rythme "
     "plus lent (jusqu'à -5.5 possessions/48min en 2023-24, écart quasi neutre dans les années "
-    "90-2000 mais nettement plus marqué depuis) — un volume de stats par match plus faible en "
+    "90-2000 mais nettement plus marqué depuis) : un volume de stats par match plus faible en "
     "playoffs ne traduit donc pas forcément une baisse de niveau individuel, la défense plus "
     "dure et les rotations resserrées jouent aussi. Pas corrigé dans le calcul, à garder en tête "
     "en comparant les deux périodes."
@@ -466,7 +613,7 @@ PLAYOFF_PACE_CAVEAT = (
 # PLAYOFF_PACE_CAVEAT ci-dessus, visible uniquement en mode playoffs.
 PLAYOFF_LOW_SAMPLE_THRESHOLD_CAVEAT = (
     " Attention : seuil \"échantillon court\" différent en playoffs : un joueur y est marqué à partir de "
-    "moins de 4 matchs (contre 15 en saison régulière) — le nombre maximum de matchs réellement "
+    "moins de 4 matchs (contre 15 en saison régulière) : le nombre maximum de matchs réellement "
     "jouable en playoffs (~22-23 dans la pratique, 4 tours best-of-7) est trop faible pour garder "
     "le même seuil : appliqué tel quel, il marquait ~84% de tous les joueurs de playoffs, y "
     "compris un tiers à la moitié du roster de l'équipe championne. 4 matchs = le minimum pour "
@@ -477,7 +624,7 @@ missing_salary = df["salary"].isna().all() if "salary" in df.columns else True
 if missing_salary and "salary_musd" in (x_key, y_key, color_key):
     st.warning(
         "Aucun salaire trouvé pour cette saison. Le dataset Kaggle n'est peut-être pas "
-        "encore configuré (voir `README.md` — téléchargement manuel possible) ou ne couvre "
+        "encore configuré (voir `README.md`, téléchargement manuel possible) ou ne couvre "
         "pas encore cette saison."
     )
 
@@ -495,7 +642,7 @@ n_estimated_early = int(df.get("salary_is_estimated", pd.Series(dtype=bool)).sum
 if n_priced and (n_estimated_early / n_priced) >= 0.9:
     st.warning(
         f"Les salaires de {season} ne sont pas encore disponibles dans la source de données "
-        "(dataset Kaggle pas encore mis à jour pour cette saison) — les valeurs affichées sont en "
+        "(dataset Kaggle pas encore mis à jour pour cette saison) : les valeurs affichées sont en "
         "réalité reprises en repli de la saison précédente disponible, **pas** les vrais chiffres "
         "de cette saison. Redeviendra correct automatiquement dès que le dataset sera mis à jour "
         "(aucune date connue)."
@@ -517,9 +664,13 @@ if plot_df.empty:
 # nba.MIN_GAMES_FOR_FIT. On garde low_sample_size (bool) pour la logique et on dérive un
 # libellé lisible pour la légende du symbole plutôt que d'afficher "True"/"False".
 symbol_key = None
+LOW_SAMPLE_SYMBOL_LABEL = (
+    f"Échantillon court ({sport.low_sample_label})" if sport.low_sample_label
+    else "Échantillon court (peu de matchs)"
+)
 if "low_sample_size" in plot_df.columns:
     plot_df["Échantillon"] = plot_df["low_sample_size"].map(
-        {True: "Échantillon court (peu de matchs)", False: "Échantillon normal"}
+        {True: LOW_SAMPLE_SYMBOL_LABEL, False: "Échantillon normal"}
     )
     symbol_key = "Échantillon"
 
@@ -533,6 +684,25 @@ def _format_value(value, fmt: str) -> str | None:
         return str(value)
 
 
+def format_metric(row, key: str) -> str | None:
+    """Valeur d'une métrique pour l'infobulle et le tableau. Pourcentage à tentatives (Metric.
+    made_col, rugby) : "78 % (52/67)", précédé de "NC" sous le seuil (Metric.min_attempts).
+    Sinon le format de la métrique (NBA : inchangé). None si la valeur manque."""
+    m = metrics[key]
+    value = row.get(key)
+    if pd.isna(value):
+        return None
+    if m.made_col is None:
+        if sport.french_format and m.fmt.endswith("%"):
+            return f"{value * 100:.0f} %"
+        return _format_value(value, m.fmt)
+    made, attempts = row.get(m.made_col), row.get(m.attempts_col)
+    text = f"{value * 100:.0f} % ({made:.0f}/{attempts:.0f})"
+    if m.min_attempts is not None and attempts < m.min_attempts:
+        return f"NC, {text}"
+    return text
+
+
 def _build_hover_text(row) -> str:
     """Infobulle 100% en français, libellés naturels, uniquement l'essentiel pour
     interpréter le point : équipe, salaire réel (toujours, peu importe les axes choisis), puis
@@ -542,6 +712,9 @@ def _build_hover_text(row) -> str:
     lines = []
     if pd.notna(row.get("team")):
         lines.append(f"Équipe : {row['team']}")
+    # Poste en clair (rugby : "(banc)" pour un remplaçant jamais titulaire).
+    if pd.notna(row.get("position_label")):
+        lines.append(f"Poste : {row['position_label']}")
     # Utile seulement en mode "Toutes les saisons" (sinon déjà indiqué dans le titre) : un même
     # joueur y apparaît comme plusieurs points distincts, un par saison jouée.
     if is_all_seasons and pd.notna(row.get("season")):
@@ -567,13 +740,22 @@ def _build_hover_text(row) -> str:
     shown_keys = {"salary_musd"}
     for key in (x_key, y_key, color_key, size_key):
         if key in metrics and key not in shown_keys:
-            val_str = _format_value(row.get(key), metrics[key].fmt)
+            val_str = format_metric(row, key)
             if val_str is not None:
-                lines.append(f"{metrics[key].label} : {val_str}")
+                unreliable = f" ({UNRELIABLE_TXT})" if metrics[key].unreliable else ""
+                lines.append(f"{metrics[key].label} : {val_str}{unreliable}")
             shown_keys.add(key)
 
     games = row.get("games_played")
-    if row.get("low_sample_size"):
+    # Rugby : titularisations et minutes totales (minutes_total), plus parlantes qu'une moyenne
+    # par match pour juger un échantillon.
+    starts, minutes_total = row.get("starts"), row.get("minutes_total")
+    if pd.notna(minutes_total):
+        starts_str = f" ({starts:.0f} titularisations)" if pd.notna(starts) else ""
+        games_str = f"{games:.0f}" if pd.notna(games) else "?"
+        prefix = "Échantillon court : " if row.get("low_sample_size") else "Matchs joués : "
+        lines.append(f"{prefix}{games_str} matchs{starts_str}, {minutes_total:.0f} min")
+    elif row.get("low_sample_size"):
         games_str = f"{games:.0f}" if pd.notna(games) else "?"
         minutes = row.get("minutes_per_game")
         minutes_str = f", {minutes:.1f} min/match" if pd.notna(minutes) else ""
@@ -604,6 +786,22 @@ _award_border_width = 2.2 if is_all_seasons else 2.5
 plot_df["_border_color"] = plot_df["_awards"].map(lambda a: _award_border_color if a else "DarkSlateGrey")
 plot_df["_border_width"] = plot_df["_awards"].map(lambda a: _award_border_width if a else 0.5)
 
+# Pourcentages en "10 %" plutôt qu'en "0.1" sur les axes et la barre de couleur
+# (sport.french_format, rugby ; la NBA garde ses graduations) : valeurs du graph multipliées par
+# 100 et suffixe " %" (le format d3 ".0%" n'écrit pas l'espace). Après la construction des
+# infobulles, qui lisent les fractions d'origine.
+pct_scaled = set()
+if sport.french_format:
+    for _k in dict.fromkeys((x_key, y_key, color_key)):
+        if _k in metrics and metrics[_k].fmt.endswith("%"):
+            plot_df[_k] = plot_df[_k] * 100
+            pct_scaled.add(_k)
+
+# Couleurs fixes d'une colonne catégorielle (sport.category_colors, rugby : Avants bleu, Arrières
+# rouge, Indéterminé gris), quelles que soient la compétition et la saison, dans cet ordre de
+# légende. Sans elles, plotly attribue les couleurs dans l'ordre d'apparition des valeurs, qui
+# change d'une saison à l'autre.
+_fixed_colors = (sport.category_colors or {}).get(color_key)
 fig = px.scatter(
     plot_df,
     x=x_key,
@@ -611,12 +809,15 @@ fig = px.scatter(
     color=None if color_key == "Aucune" else color_key,
     size=None if size_key == "Aucune" else size_key,
     symbol=symbol_key,
-    symbol_map={"Échantillon normal": "circle", "Échantillon court (peu de matchs)": "diamond"} if symbol_key else None,
+    symbol_map={"Échantillon normal": "circle", LOW_SAMPLE_SYMBOL_LABEL: "diamond"} if symbol_key else None,
     size_max=28,
-    hover_name="player",
+    hover_name=label_col,
     custom_data=["_hover", "_border_color", "_border_width"],
     color_continuous_scale="RdYlGn" if color_key in metrics and metrics[color_key].category == "Efficacité" else "Viridis",
-    labels={x_key: x_meta.label, y_key: y_meta.label, **({color_key: metrics[color_key].label} if color_key in metrics else {})},
+    labels={x_key: x_meta.label, y_key: y_meta.label, **({color_key: metrics[color_key].label} if color_key in metrics else {}),
+            **({color_key: categorical_colors[color_key]} if color_key in categorical_colors else {})},
+    color_discrete_map=_fixed_colors,
+    category_orders={color_key: list(_fixed_colors)} if _fixed_colors else None,
     template="plotly_white",
     height=700,
     # PAS de render_mode forcé : plotly express bascule automatiquement en WebGL (Scattergl) au-delà
@@ -630,6 +831,19 @@ fig = px.scatter(
 fig.update_traces(
     hovertemplate="<b>%{hovertext}</b><br>%{customdata[0]}<extra></extra>",
 )
+
+# Légende réduite aux couleurs (sport.legend_symbols=False, rugby) : plotly nomme chaque trace
+# "couleur, échantillon" ("Avants, Échantillon normal") ; on retire la partie échantillon et on
+# ne garde qu'une entrée par couleur. Le losange est expliqué par la mention sous le graph.
+if symbol_key and sport.legend_symbols is False:
+    _seen_legend = set()
+    for _trace in fig.data:
+        _parts = [p for p in (_trace.name or "").split(", ")
+                  if p not in ("Échantillon normal", LOW_SAMPLE_SYMBOL_LABEL)]
+        _name = ", ".join(_parts)
+        _trace.name = _trace.legendgroup = _name
+        _trace.showlegend = bool(_name) and _name not in _seen_legend
+        _seen_legend.add(_name)
 
 
 def _apply_award_borders(trace) -> None:
@@ -645,6 +859,11 @@ def _apply_award_borders(trace) -> None:
 
 
 fig.for_each_trace(_apply_award_borders)
+if pct_scaled:
+    fig.update_xaxes(ticksuffix=" %" if x_key in pct_scaled else None)
+    fig.update_yaxes(ticksuffix=" %" if y_key in pct_scaled else None)
+    if color_key in pct_scaled:
+        fig.update_layout(coloraxis_colorbar_ticksuffix=" %")
 fig.update_layout(
     xaxis_title=x_meta.label,
     yaxis_title=y_meta.label,
@@ -696,7 +915,7 @@ if not award_rows.empty and AWARD_ICONS and not is_all_seasons:
     # Le joueur recherché a déjà son propre label texte "top center" (surlignage ci-dessous) —
     # exclu ici pour ne pas superposer deux textes au même endroit ; sa (ses) éventuelle(s)
     # récompense(s) reste(nt) visible(s) via la bordure dorée de son point + le tooltip.
-    text_rows = award_rows if searched_player == "Aucun" else award_rows[award_rows["player"] != searched_player]
+    text_rows = award_rows if searched_player == "Aucun" else award_rows[award_rows[label_col] != searched_player]
     if not text_rows.empty:
         badge_labels = text_rows["_awards"].map(
             lambda codes: "".join(AWARD_ICONS.get(c, "") for c in codes)
@@ -715,11 +934,16 @@ if not award_rows.empty and AWARD_ICONS and not is_all_seasons:
         )
 
 if searched_player != "Aucun":
-    highlight_row = plot_df[plot_df["player"] == searched_player]
+    highlight_row = plot_df[plot_df[label_col] == searched_player]
     if highlight_row.empty:
+        _hidden_low = (not show_low_sample) and bool(
+            df.loc[df[label_col] == searched_player, "low_sample_size"].fillna(False).any()
+        ) if "low_sample_size" in df.columns else False
         st.info(
             f"**{searched_player}** ne correspond à aucun point affiché avec les filtres "
             "actuels (minutes/matchs joués minimum, équipe...). Élargis les filtres pour le voir."
+            + (" Son échantillon est court : coche « Afficher les échantillons courts »."
+               if _hidden_low else "")
         )
     else:
         # En mode "Toutes les saisons", un même joueur peut avoir plusieurs points (un par
@@ -745,26 +969,110 @@ if searched_player != "Aucun":
 
 st.plotly_chart(fig, width='stretch')
 
-if symbol_key:
-    st.caption(
-        "◆ Losange = échantillon de saison court (peu de matchs joués) — affiché (même "
-        "remplissage coloré que les ronds), sa moyenne par match peut être moins représentative "
-        "d'une saison complète."
+# Losange : toujours expliqué pour la NBA ; pour un sport à case "Afficher les échantillons
+# courts", seulement quand des losanges sont réellement à l'écran.
+if symbol_key and (sport.show_low_sample_default is None or plot_df["low_sample_size"].any()):
+    _low_sample_desc = (
+        f"échantillon de saison court ({sport.low_sample_label})" if sport.low_sample_label
+        else "échantillon de saison court (peu de matchs joués)"
     )
+    st.caption(
+        f"◆ Losange = {_low_sample_desc}, affiché avec le même remplissage coloré que les ronds : "
+        "sa moyenne peut être moins représentative d'une saison complète."
+    )
+
+# Mentions des joueurs retirés du graph (échantillons courts masqués, "NC") et des stats peu
+# fiables choisies. Rien ne s'affiche pour la NBA (ni case, ni seuil NC, ni stat peu fiable).
+_graph_notes = []
+if n_low_sample_hidden:
+    _graph_notes.append(
+        f"{n_low_sample_hidden} joueur{'s' if n_low_sample_hidden > 1 else ''} à échantillon court "
+        f"masqué{'s' if n_low_sample_hidden > 1 else ''} ({sport.low_sample_label}), présents "
+        "dans le tableau détaillé."
+    )
+if n_nc_hidden:
+    _nc_txt = ", ".join(
+        f"{metrics[k].label} sous {metrics[k].min_attempts} tentatives"
+        for k in dict.fromkeys((x_key, y_key)) if metrics[k].min_attempts is not None
+    )
+    _graph_notes.append(
+        f"{n_nc_hidden} joueur{'s' if n_nc_hidden > 1 else ''} NC (non classé{'s' if n_nc_hidden > 1 else ''} : "
+        f"{_nc_txt}) non affiché{'s' if n_nc_hidden > 1 else ''}."
+    )
+_unreliable = [metrics[k].label for k in dict.fromkeys((x_key, y_key, color_key, size_key))
+               if k in metrics and metrics[k].unreliable]
+if _unreliable:
+    _graph_notes.append(
+        f"{', '.join(_unreliable)} : {UNRELIABLE_TXT} (événements rares, écarts entre joueurs "
+        "en bonne partie dus au hasard ; voir la méthodologie)."
+    )
+for _note in _graph_notes:
+    st.caption(_note)
 
 with st.expander("Sources des données et méthodologie", expanded=False):
     st.caption(data_sources_caption)
     if playoff_stats_caveat:
         st.caption(playoff_stats_caveat)
 
-with st.expander("Voir les données détaillées"):
-    display_cols = ["player", "team"] + sorted(set([x_key, y_key] + ([color_key] if color_key in metrics else [])))
-    if symbol_key:
-        display_cols += [c for c in ("games_played", symbol_key) if c not in display_cols]
-    st.dataframe(
-        plot_df[display_cols].sort_values(y_key, ascending=False).reset_index(drop=True),
-        width="stretch",  # voir commentaire ci-dessus (expander méthodologie)
+def _detail_table():
+    """Tableau détaillé d'un sport qui le décrit (sport.detail_lead_columns, rugby) : tous les
+    joueurs des filtres, échantillons courts compris (table_base_df) mais rangés après les autres,
+    puis triés sur Y dans chaque groupe (les NC en dernier). Colonnes renommées, colonne "Saison"
+    en mode "Toutes les saisons", pourcentages en "78 % (52/67)" ou "NC". Renvoie un Styler :
+    nombres affichés avec une décimale et une virgule (french_format), le tri au clic restant
+    numérique."""
+    lead, tail = dict(sport.detail_lead_columns), sport.detail_tail_columns or {}
+    if is_all_seasons:  # "Saison" juste après le nom du joueur
+        _items = list(lead.items())
+        lead = dict(_items[:1] + [("season", "Saison")] + _items[1:])
+    metric_cols = list(dict.fromkeys(
+        [x_key, y_key] + ([color_key] if color_key in metrics else [])
+    ))
+    base = table_base_df.copy()
+    base["_sort"] = base[y_key].mask(nc_mask(base, y_key))
+    base["_low"] = base["low_sample_size"].fillna(False).astype(bool) if "low_sample_size" in base.columns else False
+    base = base.sort_values(["_low", "_sort"], ascending=[True, False], na_position="last")
+    out = base[[c for c in lead if c in base.columns]].rename(columns=lead)
+    number_formats = {}
+    for k in metric_cols:
+        m = metrics[k]
+        if m.made_col is not None:
+            out[m.label] = [
+                (lambda t: "NC" if t is None or t.startswith("NC") else t)(format_metric(r, k))
+                for _, r in base.iterrows()
+            ]
+        elif sport.french_format and m.fmt.endswith("%"):
+            out[m.label] = [format_metric(r, k) for _, r in base.iterrows()]
+        else:
+            out[m.label] = base[k]
+            number_formats[m.label] = "{:.1f}" if m.fmt.endswith("1f") else "{:.0f}"
+    for c, header in tail.items():
+        if c in base.columns and c not in metric_cols:
+            out[header] = base[c]
+            if pd.api.types.is_numeric_dtype(base[c]):
+                number_formats[header] = "{:.0f}"
+    for c, header in lead.items():
+        if c in base.columns and pd.api.types.is_float_dtype(base[c]):
+            number_formats[header] = "{:.0f}"
+    if "low_sample_size" in base.columns:
+        out["Échantillon"] = base["low_sample_size"].map({True: "court", False: "normal"})
+    out = out.reset_index(drop=True)
+    return out.style.format(
+        number_formats, decimal="," if sport.french_format else ".", thousands=None, na_rep="",
     )
+
+
+with st.expander("Voir les données détaillées"):
+    if sport.detail_lead_columns:
+        st.dataframe(_detail_table(), width="stretch", hide_index=True)
+    else:
+        display_cols = ["player", "team"] + sorted(set([x_key, y_key] + ([color_key] if color_key in metrics else [])))
+        if symbol_key:
+            display_cols += [c for c in ("games_played", symbol_key) if c not in display_cols]
+        st.dataframe(
+            plot_df[display_cols].sort_values(y_key, ascending=False).reset_index(drop=True),
+            width="stretch",  # voir commentaire ci-dessus (expander méthodologie)
+        )
 
 # --------------------------------------------------------------------------
 # Bandeau "classement des équipes" — remplace l'ancien classement par valeur ajoutée (retiré
@@ -803,7 +1111,7 @@ else:
             index=0,
             key="team_ranking_period",
             help=(
-                "Indépendant du réglage \"Statistiques utilisées\" du scatter plot ci-dessus — ce "
+                "Indépendant du réglage \"Statistiques utilisées\" du scatter plot ci-dessus : ce "
                 "bandeau a son propre mode. Une équipe non qualifiée en playoffs n'apparaît "
                 "simplement pas dans ce cas."
             ),
