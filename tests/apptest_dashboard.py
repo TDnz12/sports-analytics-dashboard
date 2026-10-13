@@ -72,17 +72,19 @@ def name_key(competition, seasons):  # libellé affiché -> clé de tri (nom de 
 
 
 def sorted_by_name(table, competition, seasons, all_seasons=False):
-    """Dans chaque groupe d'échantillon : nom de famille, prénom, puis saison."""
+    """Tout le tableau, échantillons courts compris : nom de famille, prénom, puis saison."""
     keys = name_key(competition, seasons)
-    for group in ("normal", "court"):
-        g = table[table["Échantillon"] == group]
-        if all_seasons:
-            order = [keys[(j, s)] + (s,) for j, s in zip(g["Joueur"], g["Saison"])]
-        else:
-            order = [keys[(j, seasons[0])] for j in g["Joueur"]]
-        if order != sorted(order):
-            return False
-    return True
+    if all_seasons:
+        order = [keys[(j, s)] + (s,) for j, s in zip(table["Joueur"], table["Saison"])]
+    else:
+        order = [keys[(j, seasons[0])] for j in table["Joueur"]]
+    return order == sorted(order)
+
+
+def short_mixed_in(table):
+    """Échantillons courts mêlés aux autres : une ligne "normal" au moins après le premier "court"."""
+    groups = table["Échantillon"].tolist()
+    return "court" in groups and "normal" in groups[groups.index("court"):]
 
 
 FAMILY_COLORS = {"Avants": "#1f77b4", "Arrières": "#d62728", "Indéterminé": "#9e9e9e"}
@@ -163,16 +165,15 @@ table = at.dataframe[0].value
 assert list(table.columns[:6]) == ["Joueur", "Équipe", "Poste", "Matchs", "Titularisations", "Minutes"]
 assert {"Plaquages par 80 min", "Mètres par 80 min", "Essais", "Cartons (J / R)", "Échantillon"} <= set(table.columns)
 assert len(table) == n_shown + n_hidden and (table["Échantillon"] == "court").sum() == n_hidden
-# Échantillons courts après les autres, puis nom de famille et prénom dans chaque groupe
-assert list(table["Échantillon"]) == ["normal"] * n_shown + ["court"] * n_hidden
-assert sorted_by_name(table, "top14", ["2025-26"])
+# Ordre purement alphabétique (nom de famille, prénom), échantillons courts mêlés aux autres
+assert sorted_by_name(table, "top14", ["2025-26"]) and short_mixed_in(table)
 assert table["Poste"].str.endswith(" (banc)").any() and not table["Poste"].str.contains("déduit").any()
 shown = display(at)
 assert shown["Mètres par 80 min"].str.fullmatch(r"\d+,\d").all(), shown["Mètres par 80 min"].head()
 assert shown["Minutes"].str.fullmatch(r"\d+").all() and shown["Essais"].str.fullmatch(r"\d+").all()
 assert index_hidden(at)
 assert "Saison" not in table.columns
-ok("Rugby : tableau détaillé complet, échantillons courts en dernier puis ordre alphabétique, virgule décimale, sans index")
+ok("Rugby : tableau détaillé complet, ordre alphabétique sans regrouper les échantillons courts, virgule décimale, sans index")
 
 box.check().run()
 assert not at.exception and points(at) == n_shown + n_hidden
@@ -239,6 +240,7 @@ assert widget(at, "selectbox", "Statistiques utilisées") is None and points(at)
 table = at.dataframe[0].value
 assert list(table.columns[:3]) == ["Joueur", "Saison", "Équipe"]
 assert sorted_by_name(table, "prod2", ["2022-23", "2023-24", "2024-25", "2025-26"], all_seasons=True)
+assert short_mixed_in(table)
 ok("Rugby : mode Toutes les saisons, colonne Saison dans le tableau")
 
 # Bug du 13 octobre : depuis « Toutes les saisons », changer de compétition doit remettre la saison
