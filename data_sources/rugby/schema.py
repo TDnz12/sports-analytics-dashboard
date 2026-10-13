@@ -20,6 +20,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..base import PROCESSED_ROOT, RAW_ROOT
+from .positions import (
+    BACKS, CENTRE, FLANKER, FLY_HALF, FORWARDS, FULLBACK, HOOKER, LOCK, NUMBER_8, PROP,
+    SCRUM_HALF, WING,
+)
 
 # --- Identifiants ----------------------------------------------------------
 SOURCE_INCROWD = "icw"
@@ -160,11 +164,74 @@ def processed_path(competition: str, season: str, period: str = "all",
 # un cache d'une autre version comme absent). Chaque montée porte un commentaire "vN : raison".
 RUGBY_RAW_TABLES_SCHEMA_VERSION = 1      # les 5 tables de RAW_TABLES, produites ensemble
 RUGBY_PROFILES_SCHEMA_VERSION = 1
-RUGBY_PROCESSED_SCHEMA_VERSION = 1
+RUGBY_PROCESSED_SCHEMA_VERSION = 2      # v2 : low_sample_size au seuil club calibré (5 matchs, 520 min)
 
-# Seuils de la population de référence du radar et du badge "échantillon court" (plan, 4.5) :
-# (matchs joués, minutes). À confirmer par la calibration (scripts/rugby_calibrate.py).
-SAMPLE_THRESHOLDS = {CLUB: (5, 240), INTERNATIONAL: (2, 120)}
+# --- Seuils et radar (calibration : scripts/rugby_calibrate.py, rugby_notes/calibration_v1.md) ---
+# Population de référence du radar et badge "échantillon court" : (matchs joués, minutes).
+# Club : 520 min = plus grand seuil qui garde, dans chaque poste et chaque saison (Top 14 et
+# Pro D2), au moins 12 joueurs et 70 % des minutes jouées ; au-delà, les piliers (39 min par
+# match en médiane) passent sous 70 %. Une fiabilité médiane de 0,6 sur l'ancien socle aurait
+# demandé 1 220 min. 5 matchs : sans effet à 520 min (7 matchs au moins), gardé pour le badge.
+# International : provisoire, à calibrer au lot 7 avec la même méthode.
+SAMPLE_THRESHOLDS = {CLUB: (5, 520), INTERNATIONAL: (2, 120)}
+
+# Pourcentages ajustés ("padding", même formule que la NBA) : (réussis + P x moyenne de
+# référence) / (tentatives + P). {mode : {colonne ajustée : (réussis, tentatives, P, tentatives
+# minimum sur la saison, référence de la moyenne)}}. Sous le minimum : NaN, "NC" dans le tableau.
+# P : split-half en tentatives, un seul P par stat (les P par poste divergent, piste notée après
+# la V1). Minimum NC : volume où le joueur pèse 0,2 dans son % ajusté (n = P / 4, arrondi à 5),
+# ordre de grandeur des seuils NBA. Référence "position" : moyenne du poste ; "kickers" : tous les
+# buteurs qualifiés, sans poste. International : au lot 7.
+PADDING_REF_POSITION, PADDING_REF_KICKERS = "position", "kickers"
+PCT_PADDING = {
+    CLUB: {
+        "tackle_pct_adj": ("tackles", "tackle_attempts", 97, 25, PADDING_REF_POSITION),
+        "gain_line_pct_adj": ("carries_gain_line", "carries", 82, 20, PADDING_REF_POSITION),
+        "goal_kick_pct_adj": ("goals_made", "goal_attempts", 146, 35, PADDING_REF_KICKERS),
+    },
+}
+
+# Axes du radar club. Règle (décision du 13 octobre 2026) : un axe n'est sur le radar d'un poste
+# que si sa fiabilité sur une saison de 520 min atteint 0,4 pour ce poste (calibration_v1.md,
+# section 5). Hors radar mais gardés dans le tableau et la fiche joueur : pénalités concédées et
+# ballons perdus (par 80, "peu fiable sur une saison"), franchissements, essais (total), % au pied
+# (détail réussis / tentatives, % ajusté de PCT_PADDING), % plaquages des arrières.
+# {clé : (libellé, colonne affichée, colonne du score ou None, colonne des tentatives ou None)}
+RADAR_MIN_RELIABILITY = 0.4
+RADAR_AXES_CLUB = {
+    "tackles": ("Plaquages", "tackles_per80", None, None),
+    "tackle_pct": ("% plaquages", "tackle_pct", "tackle_pct_adj", "tackle_attempts"),
+    "metres": ("Mètres", "metres_per80", None, None),
+    "gain_line_pct": ("% gain de ligne", "gain_line_pct", "gain_line_pct_adj", "carries"),
+    "carries": ("Courses", "carries_per80", None, None),
+    "turnovers_won": ("Grattages", "turnovers_won_per80", None, None),
+    "defenders_beaten": ("Défenseurs battus", "defenders_beaten_per80", None, None),
+    "passes": ("Passes", "passes_per80", None, None),
+    "kick_metres": ("Mètres au pied", "kick_metres_per80", None, None),
+    "offloads": ("Offloads", "offloads_per80", None, None),
+    "lineouts_won_jumper": ("Touches gagnées", "lineouts_won_jumper_per80", None, None),
+    "lineout_steals": ("Touches volées", "lineout_steals_per80", None, None),
+}
+RADAR_SOCLE = ("tackles", "tackle_pct", "metres", "gain_line_pct")
+RADAR_FAMILY = {
+    FORWARDS: ("carries", "turnovers_won", "defenders_beaten", "passes"),
+    BACKS: ("defenders_beaten", "carries", "kick_metres"),
+}
+# Axes du radar par poste, dans l'ordre d'affichage : socle, famille, spécialités. Une spécialité
+# déjà présente dans la famille n'est pas remplacée (3e ligne aile, 3e ligne centre, demis).
+RADAR_AXES_BY_POSITION = {
+    PROP: RADAR_SOCLE + RADAR_FAMILY[FORWARDS] + ("offloads",),
+    HOOKER: RADAR_SOCLE + RADAR_FAMILY[FORWARDS] + ("offloads",),
+    LOCK: RADAR_SOCLE + RADAR_FAMILY[FORWARDS] + ("lineouts_won_jumper", "lineout_steals"),
+    FLANKER: RADAR_SOCLE + RADAR_FAMILY[FORWARDS] + ("lineouts_won_jumper",),
+    NUMBER_8: RADAR_SOCLE + RADAR_FAMILY[FORWARDS] + ("offloads",),
+    SCRUM_HALF: RADAR_SOCLE + RADAR_FAMILY[BACKS] + ("passes",),
+    FLY_HALF: RADAR_SOCLE + RADAR_FAMILY[BACKS] + ("passes",),
+    CENTRE: RADAR_SOCLE + RADAR_FAMILY[BACKS] + ("offloads", "passes"),
+    WING: RADAR_SOCLE + RADAR_FAMILY[BACKS] + ("offloads",),
+    # % plaquages : fiabilité 0,32 (45 plaquages tentés par saison en médiane).
+    FULLBACK: tuple(a for a in RADAR_SOCLE if a != "tackle_pct") + RADAR_FAMILY[BACKS] + ("passes",),
+}
 
 # --- Colonnes des tables brutes ----------------------------------------------
 # extra_time / duration_min : prolongation (2 x 10 min, phases finales seulement), durée de
