@@ -161,7 +161,8 @@ def extract_match(payload: dict, competition: str) -> dict[str, pd.DataFrame]:
             jersey = int(p["positionId"])
             lineup_rows.append({
                 "match_uid": match_uid, "team_uid": team_uid, "player_uid": player_uid,
-                "player_name": p.get("known") or p.get("name"), "jersey": jersey,
+                "player_name": p.get("known") or p.get("name"),
+                "first_name": p.get("firstName"), "last_name": p.get("lastName"), "jersey": jersey,
                 "is_starter": jersey <= 15, "captain": bool(p.get("captain")),
                 "source_position_label": p.get("position"),
             })

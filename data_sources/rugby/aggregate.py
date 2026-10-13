@@ -91,6 +91,8 @@ def aggregate_season(tables: dict[str, pd.DataFrame], competition: str,
     })
     last = squad.sort_values("date_utc").drop_duplicates("player_uid", keep="last").set_index("player_uid")
     out["player"] = last["player_name"]
+    out["first_name"] = last["first_name"]
+    out["last_name"] = last["last_name"]
     out["team_uid"] = last["team_uid"]
     out["team"] = out["team_uid"].map(_team_names(all_matches))
     out["team_matches_span"] = _team_matches_span(squad, matches)
@@ -124,6 +126,7 @@ def aggregate_season(tables: dict[str, pd.DataFrame], competition: str,
     out["season"] = all_matches["season"].iloc[0]
 
     head = ["sport", "season", "player", "team", "competition", "player_uid", "player_label",
+            "first_name", "last_name",
             "team_uid", "position_group", "position_family", "position_source",
             "secondary_positions", "position_detail", "games_played", "starts",
             "matchday_squads", "team_matches_span", "availability", "minutes_total",

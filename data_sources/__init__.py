@@ -133,6 +133,9 @@ class SportConfig:
     # NBA (nom, équipe, métriques, matchs, échantillon, sans renommage).
     detail_lead_columns: Optional[dict] = None
     detail_tail_columns: Optional[dict] = None
+    # Tri par défaut de ce tableau (colonnes, sans tenir compte des accents ni de la casse ; la
+    # saison est ajoutée en mode "Toutes les saisons") ; None = tri sur Y décroissant.
+    detail_sort_columns: Optional[list] = None
 
 
 # --- Sport actif ---------------------------------------------------------
@@ -205,6 +208,7 @@ RUGBY = SportConfig(
     position_order=rugby.POSITION_FILTER_ORDER,
     detail_lead_columns=rugby.DETAIL_LEAD_COLUMNS,
     detail_tail_columns=rugby.DETAIL_TAIL_COLUMNS,
+    detail_sort_columns=["last_name", "first_name"],
 )
 
 # --- Sports à venir (aucune implémentation, juste affichés "bientôt") ----

@@ -16,6 +16,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from data_sources import SPORTS
+from data_sources.base import normalize_name
 
 st.set_page_config(page_title="Sports Analytics Dashboard", layout="wide")
 
@@ -1017,7 +1018,8 @@ with st.expander("Sources des données et méthodologie", expanded=False):
 def _detail_table():
     """Tableau détaillé d'un sport qui le décrit (sport.detail_lead_columns, rugby) : tous les
     joueurs des filtres, échantillons courts compris (table_base_df) mais rangés après les autres,
-    puis triés sur Y dans chaque groupe (les NC en dernier). Colonnes renommées, colonne "Saison"
+    puis triés dans chaque groupe par sport.detail_sort_columns (rugby : nom de famille, prénom,
+    puis saison en mode "Toutes les saisons"), sinon sur Y (les NC en dernier). Colonnes renommées, colonne "Saison"
     en mode "Toutes les saisons", pourcentages en "78 % (52/67)" ou "NC". Renvoie un Styler :
     nombres affichés avec une décimale et une virgule (french_format), le tri au clic restant
     numérique."""
@@ -1031,7 +1033,15 @@ def _detail_table():
     base = table_base_df.copy()
     base["_sort"] = base[y_key].mask(nc_mask(base, y_key))
     base["_low"] = base["low_sample_size"].fillna(False).astype(bool) if "low_sample_size" in base.columns else False
-    base = base.sort_values(["_low", "_sort"], ascending=[True, False], na_position="last")
+    if sport.detail_sort_columns:
+        sort_cols = ["_low"] + sport.detail_sort_columns + (["season"] if is_all_seasons else [])
+        base = base.sort_values(
+            sort_cols, na_position="last",
+            # Sans accents ni casse : "Écoiffier" avec les E, "le Brun" avec les L.
+            key=lambda col: col.map(normalize_name) if col.dtype != bool and col.name != "season" else col,
+        )
+    else:
+        base = base.sort_values(["_low", "_sort"], ascending=[True, False], na_position="last")
     out = base[[c for c in lead if c in base.columns]].rename(columns=lead)
     number_formats = {}
     for k in metric_cols:

@@ -60,6 +60,31 @@ def index_hidden(at):
         and "_index" in at.dataframe[0].proto.columns
 
 
+def name_key(competition, seasons):  # libellé affiché -> clé de tri (nom de famille, prénom)
+    from data_sources.base import normalize_name
+    from data_sources.rugby import stats
+    keys = {}
+    for season in seasons:
+        df = stats.get_player_stats(season, competition=competition)
+        keys.update({(lbl, season): (normalize_name(ln), normalize_name(fn))
+                     for lbl, ln, fn in zip(df["player_label"], df["last_name"], df["first_name"])})
+    return keys
+
+
+def sorted_by_name(table, competition, seasons, all_seasons=False):
+    """Dans chaque groupe d'échantillon : nom de famille, prénom, puis saison."""
+    keys = name_key(competition, seasons)
+    for group in ("normal", "court"):
+        g = table[table["Échantillon"] == group]
+        if all_seasons:
+            order = [keys[(j, s)] + (s,) for j, s in zip(g["Joueur"], g["Saison"])]
+        else:
+            order = [keys[(j, seasons[0])] for j in g["Joueur"]]
+        if order != sorted(order):
+            return False
+    return True
+
+
 FAMILY_COLORS = {"Avants": "#1f77b4", "Arrières": "#d62728", "Indéterminé": "#9e9e9e"}
 
 
@@ -138,17 +163,16 @@ table = at.dataframe[0].value
 assert list(table.columns[:6]) == ["Joueur", "Équipe", "Poste", "Matchs", "Titularisations", "Minutes"]
 assert {"Plaquages par 80 min", "Mètres par 80 min", "Essais", "Cartons (J / R)", "Échantillon"} <= set(table.columns)
 assert len(table) == n_shown + n_hidden and (table["Échantillon"] == "court").sum() == n_hidden
-# Échantillons courts après les autres, tri sur Y décroissant dans chaque groupe
+# Échantillons courts après les autres, puis nom de famille et prénom dans chaque groupe
 assert list(table["Échantillon"]) == ["normal"] * n_shown + ["court"] * n_hidden
-for group in ("normal", "court"):
-    assert table.loc[table["Échantillon"] == group, "Mètres par 80 min"].dropna().is_monotonic_decreasing
+assert sorted_by_name(table, "top14", ["2025-26"])
 assert table["Poste"].str.endswith(" (banc)").any() and not table["Poste"].str.contains("déduit").any()
 shown = display(at)
 assert shown["Mètres par 80 min"].str.fullmatch(r"\d+,\d").all(), shown["Mètres par 80 min"].head()
 assert shown["Minutes"].str.fullmatch(r"\d+").all() and shown["Essais"].str.fullmatch(r"\d+").all()
 assert index_hidden(at)
 assert "Saison" not in table.columns
-ok("Rugby : tableau détaillé complet, échantillons courts en dernier, virgule décimale, sans index")
+ok("Rugby : tableau détaillé complet, échantillons courts en dernier puis ordre alphabétique, virgule décimale, sans index")
 
 box.check().run()
 assert not at.exception and points(at) == n_shown + n_hidden
@@ -167,11 +191,8 @@ assert spec(at)["layout"]["yaxis"]["ticksuffix"] == " %" and "ticksuffix" not in
 table = at.dataframe[0].value
 col = table["% au pied (transformations et pénalités)"]
 assert col.str.fullmatch(r"\d+ % \(\d+/\d+\)").sum() > 10 and (col == "NC").any()
-for group in ("normal", "court"):  # NC en fin de chaque groupe d'échantillon
-    g = list(col[table["Échantillon"] == group])
-    if "NC" in g:
-        assert all(v == "NC" for v in g[g.index("NC"):])
-ok("Rugby : % au pied en Y, NC retirés du graph et en fin de tableau, détail réussis/tentatives")
+assert sorted_by_name(table, "top14", ["2025-26"])  # tri alphabétique, quel que soit Y
+ok("Rugby : % au pied en Y, NC retirés du graph, « NC » et détail réussis/tentatives dans le tableau")
 
 # Stat peu fiable : mention dans le sélecteur et sous le graph
 y = widget(at, "selectbox", "Statistique en ordonnée (Y)")
@@ -215,7 +236,9 @@ season.set_value(season.options[0]).run()
 assert not at.exception, at.exception
 assert at.title[0].value == "Rugby · Pro D2 · Toutes les saisons (2022-23 → 2025-26)", at.title[0].value
 assert widget(at, "selectbox", "Statistiques utilisées") is None and points(at) > 600
-assert list(at.dataframe[0].value.columns[:3]) == ["Joueur", "Saison", "Équipe"]
+table = at.dataframe[0].value
+assert list(table.columns[:3]) == ["Joueur", "Saison", "Équipe"]
+assert sorted_by_name(table, "prod2", ["2022-23", "2023-24", "2024-25", "2025-26"], all_seasons=True)
 ok("Rugby : mode Toutes les saisons, colonne Saison dans le tableau")
 
 # Bug du 13 octobre : depuis « Toutes les saisons », changer de compétition doit remettre la saison

@@ -162,9 +162,11 @@ def processed_path(competition: str, season: str, period: str = "all",
 
 # Versions de schéma (même mécanisme que nba.PROCESSED_SCHEMA_VERSION : base.read_cache traite
 # un cache d'une autre version comme absent). Chaque montée porte un commentaire "vN : raison".
-RUGBY_RAW_TABLES_SCHEMA_VERSION = 1      # les 5 tables de RAW_TABLES, produites ensemble
+RUGBY_RAW_TABLES_SCHEMA_VERSION = 2      # les 5 tables de RAW_TABLES, produites ensemble
+# Raw v2 : first_name et last_name dans lineups (tri du tableau du Dashboard par nom de famille).
 RUGBY_PROFILES_SCHEMA_VERSION = 1
-RUGBY_PROCESSED_SCHEMA_VERSION = 2      # v2 : low_sample_size au seuil club calibré (5 matchs, 520 min)
+RUGBY_PROCESSED_SCHEMA_VERSION = 3      # v2 : low_sample_size au seuil club calibré (5 matchs, 520 min)
+# v3 : first_name et last_name (tri du tableau du Dashboard par nom de famille puis prénom).
 
 # --- Seuils et radar (calibration : scripts/rugby_calibrate.py, rugby_notes/calibration_v1.md) ---
 # Population de référence du radar et badge "échantillon court" : (matchs joués, minutes).
@@ -242,8 +244,12 @@ MATCH_COLUMNS = [
     "home_team_uid", "home_team", "away_team_uid", "away_team", "home_score", "away_score",
     "status", "coverage_level", "venue",
 ]
+# player_name : nom affiché (champ "known" d'InCrowd, sinon "name") ; first_name / last_name :
+# prénom et nom de famille séparés par la source, pour le tri ("Champion de Crespigny", "le Brun"
+# et "Arata Perrone" sont des noms de famille entiers, qu'un découpage au premier espace casserait).
 LINEUP_COLUMNS = [
-    "match_uid", "team_uid", "player_uid", "player_name", "jersey", "is_starter", "captain",
+    "match_uid", "team_uid", "player_uid", "player_name", "first_name", "last_name", "jersey",
+    "is_starter", "captain",
     "source_position_label",
 ]
 # Stats par joueur et par match, mêmes noms pour les deux sources (NaN si absente de la source).

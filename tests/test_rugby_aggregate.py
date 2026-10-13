@@ -42,7 +42,8 @@ def mini_season():
     lineups, pm = [], []
     for match, team, player, name, jersey, minutes, stats in rows:
         lineups.append({"match_uid": match, "team_uid": team, "player_uid": player,
-                        "player_name": name, "jersey": jersey, "is_starter": jersey <= 15})
+                        "player_name": name, "first_name": "Prénom " + name, "last_name": name,
+                        "jersey": jersey, "is_starter": jersey <= 15})
         row = {c: 0.0 for c in schema.PLAYER_MATCH_STAT_COLUMNS}
         row.update({"try_assists": np.nan, "lineout_throws": np.nan, "lineout_throws_won": np.nan})
         row.update(stats)
@@ -63,6 +64,11 @@ class AggregateTest(unittest.TestCase):
         cls.tables = mini_season()
         cls.all = aggregate_season(cls.tables, "top14", "all").set_index("player_uid")
         cls.regular = aggregate_season(cls.tables, "top14", "regular").set_index("player_uid")
+
+    def test_prenom_et_nom(self):
+        # Repris de la composition du dernier match, comme le nom affiché.
+        self.assertTrue((self.all["last_name"] == self.all["player"]).all())
+        self.assertTrue((self.all["first_name"] == "Prénom " + self.all["player"]).all())
 
     def test_contrat_commun(self):
         for col in COMMON_COLUMNS:
