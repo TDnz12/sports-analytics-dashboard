@@ -205,6 +205,144 @@ assert all("NC" not in cfg[a["label"]]["help"] for a in nba.RADAR_AXES if "attem
 assert any("« NC » (non classé)" in c.value or '"NC" (non classé)' in c.value for c in at.caption)
 ok("volume trop faible (2020-21) : axe vide, survol avec les tentatives, « 0.0% (4 tent.)  ·  NC » au tableau, NC expliqué")
 
+# --- Rugby (lot 6) -----------------------------------------------------------------
+from data_sources.rugby import get_player_stats as rugby_stats, radar as rugby_radar
+
+
+def select(at, label):
+    return next(s for s in at.selectbox if s.label == label)
+
+
+def all_texts(at):
+    texts = [t.value for t in at.title] + [c.value for c in at.caption] + [i.value for i in at.info]
+    texts += [m.value for m in at.markdown if "<style>" not in m.value]
+    for w in list(at.selectbox) + list(at.multiselect):
+        texts += [w.label] + [str(o) for o in w.options]
+    if at.dataframe:
+        texts += [str(v) for v in recap(at).to_numpy().ravel()] + list(recap(at).columns)
+    return texts
+
+
+# R1. Sport et compétition repris du Dashboard ; NBA par défaut sans choix du Dashboard
+at = new()
+assert select(at, "Sport").value == "nba" and not [s for s in at.selectbox if s.label == "Compétition"]
+at = new({"selected_sport": "rugby", "selected_competition": "prod2"})
+assert not at.exception, at.exception
+assert select(at, "Sport").value == "rugby" and select(at, "Compétition").value == "prod2"
+assert select(at, "Saison").value == "2025-26"
+assert select(at, "Statistiques utilisées").value == "Saison complète (phases finales incluses)"
+assert at.title[0].value == "Radar de comparaison · Pro D2 · 2025-26", at.title[0].value
+at = new({"selected_sport": "rugby"})
+assert select(at, "Compétition").value == "top14"
+ok("sport et compétition repris du Dashboard (Pro D2), NBA sans choix du Dashboard")
+
+# R2. Liste des joueurs : identifiants, nom et poste affichés, sans Indéterminé, (banc) compris
+df_r = rugby_radar.compute_radar_scores(rugby_stats("2025-26", competition="top14"))
+ms = at.multiselect(key="radar_players")
+assert all(v.startswith("icw:") for v in ms.value)
+und = df_r[(df_r["position_group"] == "Indéterminé") & (df_r["games_played"] > 0)]
+assert len(und) > 0 and not any(o.endswith(" · Indéterminé") for o in ms.options)
+assert any(o.endswith(" (banc)") for o in ms.options)
+assert len(ms.options) == ((df_r["games_played"] > 0) & df_r["radar_eligible"]).sum()
+assert any(f"{len(und)} joueurs sans poste déterminé" in c.value for c in at.caption)
+ok(f"liste rugby par identifiant, « Nom · Poste », {len(und)} Indéterminé exclus et signalés, (banc) proposés")
+
+
+def best(pos):  # titulaire du poste avec le plus de minutes
+    return df_r[df_r["position_group"] == pos].sort_values("minutes_total").iloc[-1]
+
+
+# R3. Pilier, Ailier, Arrière : intersection à 5 axes, notes, colonnes hors radar, cartes
+trio = [best(p) for p in ("Pilier", "Ailier", "Arrière")]
+ms.set_value([r["player_uid"] for r in trio]).run()
+assert not at.exception, at.exception
+cat = spec(at)["layout"]["polar"]["angularaxis"]["categoryarray"]
+assert cat == ["Plaquages", "Mètres", "% gain de ligne", "Courses", "Défenseurs battus"], cat
+caps = [c.value for c in at.caption]
+assert any(c.startswith("Postes différents") for c in caps)
+assert any(c.startswith("Axes retirés") and "Mètres au pied, Passes (Arrière)" in c for c in caps), caps
+assert any(c.startswith("Joueurs de référence : Pilier") for c in caps)
+assert rugby_radar.FEW_AXES_NOTE not in caps
+table = recap(at)
+assert list(table.index) == [r["player_label"] for r in trio]
+pen = "Pénalités concédées par 80 (ajusté, peu fiable)"
+for col in ("% plaquages", "Grattages (ajusté)", "Mètres au pied (ajusté)", "Essais", "% au pied",
+            "Cartons (J / R)", pen):
+    assert col in table.columns, col
+assert all(" (brut " in v for v in table[pen]), table[pen]
+cfg = json.loads(at.dataframe[0].proto.columns)
+assert "Peu fiable sur une saison" in cfg[pen]["help"] and "valeur brute entre parenthèses" in cfg[pen]["help"]
+assert [n for n, _ in cards(at)] == [r["player_label"] for r in trio]
+card = next(m.value for m in at.markdown if "border-left: 4px solid" in m.value)
+assert "· Saison complète (phases finales incluses) ·" in card
+assert "Essais : " in card and "% au pied : " in card and "Cartons : " in card
+assert "titularisation" in card and ">Pilier" in card
+ok("Pilier, Ailier, Arrière : 5 axes communs, axes retirés au tableau, hors radar, cartes")
+
+# R4. NC : % plaquages sous 25 tentatives (hors arrières, qui n'ont pas l'axe)
+nc = df_r[df_r["radar_eligible"] & (df_r["tackle_attempts"].between(1, 24))
+          & (df_r["position_group"] != "Arrière")].iloc[0]
+ms.set_value([nc["player_uid"]]).run()
+assert not at.exception, at.exception
+(circle,) = traces(at, "sans_tentative")
+reasons = dict(zip(circle["theta"], circle["customdata"]))
+assert reasons["% plaquages"] == f"volume trop faible : {nc['tackle_attempts']:.0f} plaquages tentés, minimum 25", reasons
+cell = recap(at).loc[nc["player_label"], "% plaquages"]
+assert cell.endswith("  ·  NC  ") and f"({nc['tackles']:.0f}/{nc['tackle_attempts']:.0f})" in cell, cell
+assert "Échantillon court" in next(m.value for m in at.markdown if "border-left" in m.value)
+ok(f"NC : {nc['player_label']} ({nc['tackle_attempts']:.0f} plaquages tentés), cercle creux, « NC » au tableau, échantillon court")
+
+# R5. Joueur (banc) : radar, mention dans la carte
+bench = df_r[df_r["position_source"] == "banc"].sort_values("minutes_total").iloc[-1]
+ms.set_value([bench["player_uid"]]).run()
+assert not at.exception and len(traces(at)) == 1
+assert "poste déduit du maillot de banc" in next(m.value for m in at.markdown if "border-left" in m.value)
+ok(f"(banc) : radar de {bench['player_label']}, poste déduit du maillot de banc")
+
+# R6. Présélection du Dashboard : sport, compétition, saison, période et joueur (par identifiant)
+p = rugby_stats("2023-24", competition="top14", period="regular")
+target = p[p["position_group"] == "Centre"].sort_values("minutes_total").iloc[-1]
+at = new({"radar_preselect_player": target["player_uid"], "radar_preselect_label": target["player_label"],
+          "radar_preselect_sport": "rugby", "radar_preselect_competition": "top14",
+          "radar_preselect_season": "2023-24", "radar_preselect_period": "regular"})
+assert not at.exception, at.exception
+assert (select(at, "Sport").value, select(at, "Compétition").value, select(at, "Saison").value) == \
+    ("rugby", "top14", "2023-24")
+assert select(at, "Statistiques utilisées").value == "Phase régulière"
+assert at.multiselect(key="radar_players").value == [target["player_uid"]]
+ok(f"présélection rugby : {target['player_label']}, Top 14 2023-24, phase régulière")
+
+# R7. Présélection d'un Indéterminé : message, pas de radar pour lui
+u = und.iloc[0]
+at = new({"radar_preselect_player": u["player_uid"], "radar_preselect_label": u["player_label"],
+          "radar_preselect_sport": "rugby", "radar_preselect_competition": "top14",
+          "radar_preselect_season": "2025-26", "radar_preselect_period": "all"})
+assert not at.exception and u["player_uid"] not in at.multiselect(key="radar_players").value
+assert any("n'a pas de poste déterminé" in i.value and u["player_label"] in i.value for i in at.info)
+ok("présélection d'un Indéterminé : message « pas de poste déterminé »")
+
+# R8. Retour à la NBA depuis le rugby : saison et joueurs revalidés
+select(at, "Sport").set_value("nba").run()
+assert not at.exception, at.exception
+assert select(at, "Saison").value == "2024-25" and at.title[0].value == "Radar de comparaison · 2024-25"
+assert len(at.multiselect(key="radar_players").value) == 1 and len(traces(at)) == 1
+ok("rugby puis NBA : saison 2024-25 et joueur NBA, sans erreur")
+
+# R9. Six Nations « bientôt disponible », sport sans radar
+at = new({"selected_sport": "rugby", "selected_competition": "six_nations"})
+assert not at.exception and any("Six Nations arrive dans une prochaine version" in i.value for i in at.info)
+at = new({"selected_sport": "mma"})
+assert not at.exception and any("pas encore disponible" in i.value for i in at.info)
+ok("Six Nations « bientôt disponible », MMA sans radar")
+
+# R10. Aucun tiret cadratin dans les textes rugby affichés
+at = new({"selected_sport": "rugby", "radar_players": [r["player_uid"] for r in trio]})
+assert not at.exception
+assert not [t for t in all_texts(at) if "—" in t], [t for t in all_texts(at) if "—" in t]
+at.radio[0].set_value("Centile").run()
+assert not at.exception and not [t for t in all_texts(at) if "—" in t]
+ok("rugby : aucun tiret cadratin (modes Indice et Centile)")
+
 assert writes == [], writes
 ok("aucune écriture disque")
 print("\nTous les contrôles AppTest de la page Radar sont OK")

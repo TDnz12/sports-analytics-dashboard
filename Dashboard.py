@@ -180,18 +180,45 @@ def _reset_sport_state() -> None:
         st.session_state.pop(key, None)
 
 
+# Sport et compétition partagés avec la page Radar par des clés de session NON liées à un widget
+# (selected_sport, selected_competition), écrites à chaque run par chaque page et lues à l'arrivée
+# sur la page. Les clés de widgets (main_sport, main_competition) ne suffisent pas : Streamlit
+# efface l'état des widgets de la page qu'on quitte, d'où un retour en NBA à chaque changement de
+# page. current_page : page du run précédent ; à l'arrivée depuis une autre page, le sélecteur est
+# réaligné sur la clé partagée, même si son ancien état a survécu. NBA seulement si rien n'a
+# jamais été choisi.
+_entering_page = st.session_state.get("current_page") != "dashboard"
+st.session_state["current_page"] = "dashboard"
+
+
+def _sync_from_shared(widget_key: str, shared_key: str, valid: list, default, on_change=None) -> None:
+    """Valeur initiale d'un sélecteur partagé entre pages, écrite avant sa création : la clé
+    partagée à l'arrivée sur la page (ou si la valeur du widget n'est plus valide), sinon `default`.
+    `on_change` (remise à zéro de la saison...) est appelé si une valeur déjà là est remplacée."""
+    shared, current = st.session_state.get(shared_key), st.session_state.get(widget_key)
+    if current in valid and not (_entering_page and shared in valid and shared != current):
+        return
+    new = shared if shared in valid else default
+    if current is not None and current != new and on_change:
+        on_change()
+    st.session_state[widget_key] = new
+
+
 # selectbox (pas radio) : un radio à une option par sport (dont la plupart pas encore
 # disponibles, juste là pour annoncer la suite) prenait une ligne de hauteur par sport dans une
 # sidebar déjà chargée -- retour utilisateur : ça poussait les sélecteurs d'axes (X/Y), bien plus
 # utilisés au quotidien, sous la ligne de flottaison. Un menu déroulant replié fait la même chose sur 1 ligne, rien ne change
-# côté fonctionnel (mêmes options, même format_func).
+# côté fonctionnel (mêmes options, même format_func). Valeur initiale : selected_sport (voir
+# _sync_from_shared), écrite dans session_state, d'où l'absence d'index=.
+_sync_from_shared("main_sport", "selected_sport", sport_keys, sport_keys[0], _reset_sport_state)
 sport_choice_key = st.sidebar.selectbox(
     "Sport",
     options=sport_keys,
     format_func=lambda k: SPORTS[k].label if SPORTS[k].available else f"{SPORTS[k].label} (bientôt disponible)",
-    index=0,
     on_change=_reset_sport_state,
+    key="main_sport",
 )
+st.session_state["selected_sport"] = sport_choice_key
 sport = SPORTS[sport_choice_key]
 
 if not sport.available:
@@ -209,6 +236,9 @@ if not sport.available:
 competition = None
 if sport.competitions:
     _competitions = {c.key: c for c in sport.competitions}
+    # Défaut : selected_competition (partagée avec le Radar), sinon la première compétition.
+    _sync_from_shared("main_competition", "selected_competition", list(_competitions),
+                      next(iter(_competitions)), _reset_season)
     competition_key = st.sidebar.selectbox(
         "Compétition",
         options=list(_competitions),
@@ -217,6 +247,7 @@ if sport.competitions:
         key="main_competition",
         on_change=_reset_season,
     )
+    st.session_state["selected_competition"] = competition_key
     competition = _competitions[competition_key]
     if not competition.available:
         st.title(f"{sport.label} · {competition.label}")
@@ -426,22 +457,32 @@ searched_player = st.sidebar.selectbox(
     help="Tape un nom pour filtrer la liste. Le joueur sélectionné est entouré sur le graph.",
 )
 
-def _handle_radar_click() -> None:
+def _handle_radar_click(player_key) -> None:
     # Exécuté par Streamlit avant le switch de page (callback on_click) : dépose le joueur/la
     # saison dans st.session_state, lus puis pop() par la page radar pour ne pré-sélectionner
     # qu'une fois. st.switch_page ici plutôt que dans le corps du script : un
     # switch_page() appelé en dehors d'un callback interromprait immédiatement le script AVANT
-    # que le reste de la sidebar (filtres...) n'ait fini de s'afficher.
-    st.session_state["radar_preselect_player"] = searched_player
+    # que le reste de la sidebar (filtres...) n'ait fini de s'afficher. Aussi le sport et la
+    # compétition ; la période seulement pour un sport qui déclare les siennes (rugby), la NBA
+    # gardant son comportement historique (saison régulière à l'ouverture du radar).
+    st.session_state["radar_preselect_player"] = player_key
+    st.session_state["radar_preselect_label"] = searched_player
     st.session_state["radar_preselect_season"] = None if is_all_seasons else season
+    st.session_state["radar_preselect_sport"] = sport.key
+    st.session_state["radar_preselect_competition"] = competition_key
+    st.session_state["radar_preselect_period"] = stats_period if sport.stats_periods else None
     st.switch_page("pages/1_Radar_de_comparaison.py")
 
 
-# Bouton masqué pour un sport sans radar (rugby jusqu'au lot 6) : la page radar n'affiche que la
-# NBA, elle recevrait un joueur qu'elle ne connaît pas.
+# Bouton masqué pour un sport sans radar. Le joueur est passé par son identifiant
+# (sport.player_key_col, rugby : player_uid, pour les homonymes ; nom en NBA), calculé ici plutôt
+# que dans le callback : au clic, df peut avoir été filtré plus bas dans ce script. En mode
+# "Toutes les saisons", la ligne la plus récente du joueur.
 if searched_player != "Aucun" and sport.compute_radar_scores is not None:
+    _key_col = sport.player_key_col or label_col
+    _radar_key = df.loc[df[label_col] == searched_player].sort_values("season")[_key_col].iloc[-1]
     st.sidebar.button(
-        "Voir le profil radar", on_click=_handle_radar_click,
+        "Voir le profil radar", on_click=_handle_radar_click, args=(_radar_key,),
         help="Ouvre la vue radar de comparaison de profils avec ce joueur pré-sélectionné.",
     )
 

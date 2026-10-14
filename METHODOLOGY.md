@@ -139,6 +139,13 @@ fautes (Tyus Jones, 51/57, 0,70 tentative par match) : d'où 0,5.
 **Limites connues.** Scoring, Passe, Rebond, Interceptions et Contres sont des valeurs par match :
 elles favorisent les joueurs qui jouent beaucoup, ce qui est assumé pour un radar de production.
 
+**Rugby, stats par 80 hors radar.** Dans le tableau du radar rugby, les stats par 80 minutes qui
+ne sont pas sur le radar (pénalités concédées, ballons perdus, axes retirés quand les postes
+diffèrent) sont rapprochées de la moyenne du poste, même logique que le padding des pourcentages :
+`(total + M × taux moyen du poste par minute) / (minutes + M) × 80`, avec pour chaque stat le M
+de la calibration (split-half, de 89 minutes pour les touches gagnées à 1 982 pour les ballons
+perdus), la valeur brute restant affichée entre parenthèses.
+
 ## Métrique défensive individuelle (piste abandonnée)
 
 Une tentative a été faite pour intégrer une métrique de "défense" individuelle

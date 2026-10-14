@@ -193,6 +193,20 @@ PCT_PADDING = {
     },
 }
 
+# Stats par 80 hors radar (tableau du radar) : rapprochées de la moyenne du poste, même logique que
+# le padding des pourcentages, en minutes : (total + M x taux du poste par minute) / (minutes + M)
+# x 80. M : constante split-half "M club" de calibration_v1.md, section 1.2 (un seul M par stat,
+# comme un seul P par stat), minutes auxquelles la moitié de l'écart observé entre joueurs est du
+# bruit. Contrôlées par scripts/rugby_calibrate.py.
+PER80_SHRINK_M = {
+    CLUB: {
+        "tackles": 382, "metres": 400, "penalties_conceded": 1494, "turnovers_conceded": 1982,
+        "carries": 145, "turnovers_won": 550, "clean_breaks": 1126, "defenders_beaten": 345,
+        "offloads": 444, "passes": 297, "kick_metres": 180, "tries": 1919,
+        "lineouts_won_jumper": 89, "lineout_steals": 389,
+    },
+}
+
 # Axes du radar club. Règle (décision du 13 octobre 2026) : un axe n'est sur le radar d'un poste
 # que si sa fiabilité sur une saison de 520 min atteint 0,4 pour ce poste (calibration_v1.md,
 # section 5). Hors radar mais gardés dans le tableau et la fiche joueur : pénalités concédées et

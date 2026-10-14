@@ -211,14 +211,48 @@ assert not at.exception and set(at.dataframe[0].value["Poste"].str.split(" \\(")
 pos.set_value([]).run()
 ok("Rugby : filtre par poste")
 
-# Recherche : bouton radar masqué ; joueur à échantillon court masqué signalé
+# Recherche : bouton radar présent (lot 6) ; joueur à échantillon court masqué signalé
 search = widget(at, "selectbox", "Rechercher un joueur")
 short = at.dataframe[0].value.query("Échantillon == 'court'")["Joueur"].iloc[0]
 search.set_value(short).run()
-assert not at.exception and widget(at, "button", "Voir le profil radar") is None
+assert not at.exception and widget(at, "button", "Voir le profil radar") is not None
 assert any("Afficher les échantillons courts" in i.value for i in at.info)
 search.set_value("Aucun").run()
-ok("Rugby : pas de bouton radar, message pour un joueur à échantillon court masqué")
+assert widget(at, "button", "Voir le profil radar") is None
+ok("Rugby : bouton radar présent, message pour un joueur à échantillon court masqué")
+
+# Bouton radar : dépose sport, compétition, saison, période et identifiant du joueur
+from data_sources.rugby import get_player_stats as rugby_stats
+_r = rugby_stats("2025-26", competition="top14")
+_target = _r[_r["position_group"] == "Ailier"].sort_values("minutes_total").iloc[-1]
+radar_at = AppTest.from_file(PAGE, default_timeout=300)
+radar_at.session_state["selected_sport"] = "rugby"
+radar_at.run()
+assert not radar_at.exception, radar_at.exception
+widget(radar_at, "selectbox", "Rechercher un joueur").set_value(_target["player_label"]).run()
+# AppTest ne suit pas st.switch_page vers un fichier de pages/ : neutralisé le temps du clic, puis
+# la page Radar est ouverte avec les clés déposées par le callback.
+import streamlit as _st
+_switch_page, _st.switch_page = _st.switch_page, lambda page: None
+widget(radar_at, "button", "Voir le profil radar").click().run()
+_st.switch_page = _switch_page
+assert not radar_at.exception, radar_at.exception
+deposited = {k: radar_at.session_state[k] for k in (
+    "radar_preselect_player", "radar_preselect_label", "radar_preselect_season",
+    "radar_preselect_sport", "radar_preselect_competition", "radar_preselect_period")}
+assert deposited == {
+    "radar_preselect_player": _target["player_uid"], "radar_preselect_label": _target["player_label"],
+    "radar_preselect_season": "2025-26", "radar_preselect_sport": "rugby",
+    "radar_preselect_competition": "top14", "radar_preselect_period": "all"}, deposited
+radar_page = AppTest.from_file(str(ROOT / "pages" / "1_Radar_de_comparaison.py"), default_timeout=300)
+for k, v in deposited.items():
+    radar_page.session_state[k] = v
+radar_page.run()
+assert not radar_page.exception, radar_page.exception
+assert radar_page.title[0].value == "Radar de comparaison · Top 14 · 2025-26", radar_page.title[0].value
+assert radar_page.multiselect(key="radar_players").value == [_target["player_uid"]]
+assert widget(radar_page, "selectbox", "Statistiques utilisées").value == "Saison complète (phases finales incluses)"
+ok(f"Rugby : « Voir le profil radar » ouvre le radar de {_target['player_label']} (Top 14 2025-26)")
 
 # Changement de compétition : saison absente du Pro D2 remise à zéro
 widget(at, "selectbox", "Saison").set_value("2021-22").run()

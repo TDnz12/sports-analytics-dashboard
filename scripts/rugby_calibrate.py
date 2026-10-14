@@ -809,6 +809,16 @@ def build_report(pm, players, st80, fit80, stp, fitp, betas, grid, fit_all, draw
     S.append("Contrôle des constantes de `schema.py` : " + (
         "identiques aux valeurs calculées ici." if not diff
         else "**différentes** : " + ", ".join(diff) + "."))
+    # M des stats par 80 hors radar (schema.PER80_SHRINK_M) : M club de la section 1.2, arrondi.
+    m_diff = []
+    for col, m_schema in schema.PER80_SHRINK_M[schema.CLUB].items():
+        m_val = round(fit80.query("stat == @col and scope == 'club' and pos == 'tous'")["C"].iloc[0])
+        if m_val != m_schema:
+            m_diff.append(f"{col} ({m_schema} contre {m_val})")
+    S.append("")
+    S.append("Contrôle des M de `schema.PER80_SHRINK_M` (stats par 80 hors radar, rapprochées de la "
+             "moyenne du poste) : " + ("identiques aux M club de la section 1.2." if not m_diff
+                                       else "**différents** : " + ", ".join(m_diff) + "."))
     too_low = proposals.pop("_radar_too_low")
     S.append("")
     S.append(f"Radar par poste (`schema.RADAR_AXES_BY_POSITION`, section 5) : " + (

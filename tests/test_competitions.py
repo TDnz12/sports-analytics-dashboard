@@ -38,8 +38,9 @@ class RegistreTest(unittest.TestCase):
         self.assertEqual({c.key: c.available for c in rugby.competitions},
                          {"top14": True, "prod2": True, "six_nations": False})
         self.assertIsNotNone(rugby.get_player_stats)
-        # Pas encore de radar ni de classement des équipes (lot 6 et après la V1).
-        self.assertIsNone(rugby.compute_radar_scores)
+        # Radar branché au lot 6 ; pas encore de classement des équipes (après la V1).
+        self.assertIsNotNone(rugby.compute_radar_scores)
+        self.assertEqual(rugby.player_key_col, "player_uid")
         self.assertIsNone(rugby.get_team_ranking)
 
     def test_reglages_dashboard_nba_explicites(self):
@@ -49,7 +50,9 @@ class RegistreTest(unittest.TestCase):
         # Champs propres au rugby : vides pour la NBA, donc rendu historique.
         for field in ("stats_periods", "show_low_sample_default", "player_label_col",
                       "categorical_colors", "position_filter_col", "detail_lead_columns",
-                      "low_sample_label", "source_caption"):
+                      "low_sample_label", "source_caption", "player_key_col", "radar_axes_for",
+                      "radar_notes_fn", "radar_card_lines", "radar_extra_columns",
+                      "radar_extra_help", "radar_reference_caption"):
             self.assertIsNone(getattr(nba, field), field)
 
     def test_defauts_rugby_dans_le_catalogue(self):

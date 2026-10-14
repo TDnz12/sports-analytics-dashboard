@@ -10,11 +10,18 @@ Duplique volontairement quelques petits éléments de Dashboard.py (bloc CSS de 
 chargement mise en cache, dict des libellés de période) plutôt que de les importer depuis
 Dashboard.py : un fichier de pages/ est un script Streamlit à part entière, pas un module — l'importer
 depuis Dashboard.py ré-exécuterait tout Dashboard.py (set_page_config compris). La duplication reste petite
-et sans logique métier (celle-ci vit dans data_sources/nba.py, réutilisée telle quelle ici).
+et sans logique métier (celle-ci vit dans data_sources/, réutilisée telle quelle ici).
+
+Plusieurs sports (lot 6 du rugby) : sélecteurs Sport puis Compétition, comme le Dashboard. Par
+défaut, la page reprend le sport et la compétition choisis en dernier, ici ou sur le Dashboard
+(clés de session selected_sport et selected_competition, non liées à un widget), sinon la NBA. Les réglages propres au sport (axes selon les postes, carte,
+colonnes hors radar, notes) sont des champs optionnels de SportConfig ; absents, rendu NBA
+historique.
 """
 
 from __future__ import annotations
 
+import html
 import textwrap
 
 import pandas as pd
@@ -106,30 +113,101 @@ st.markdown(
 # Titre retiré d'ici : fusionné dans la rangée du bouton replier la sidebar tout en haut (voir le
 # commentaire CSS de stLogoSpacer plus haut).
 
-# MVP : NBA uniquement (radar_axes/compute_radar_scores optionnels sur SportConfig, None pour
-# les sports pas encore actifs) — pas de sélecteur de sport ici, contrairement à Dashboard.py, tant
-# qu'un second sport n'a pas sa propre implémentation radar.
-sport = SPORTS["nba"]
+# Pré-sélection déposée par Dashboard.py (bouton "Voir le profil radar") — pop() pour ne
+# pré-sélectionner qu'une fois. radar_preselect_player : valeur de player_key_col (nom en NBA,
+# identifiant en rugby) ; radar_preselect_label : nom affiché, pour les messages.
+preselected_player = st.session_state.pop("radar_preselect_player", None)
+preselected_season = st.session_state.pop("radar_preselect_season", None)
+preselected_label = st.session_state.pop("radar_preselect_label", None) or preselected_player
+preselected_sport = st.session_state.pop("radar_preselect_sport", None)
+preselected_competition = st.session_state.pop("radar_preselect_competition", None)
+preselected_period = st.session_state.pop("radar_preselect_period", None)
+
+# Sport et compétition partagés avec le Dashboard par des clés de session NON liées à un widget
+# (selected_sport, selected_competition), écrites à chaque run par chaque page : Streamlit efface
+# l'état des widgets de la page qu'on quitte (radar_sport ici, main_sport sur le Dashboard), qui ne
+# peut donc pas servir à passer d'une page à l'autre. current_page : page du run précédent ; à
+# l'arrivée depuis une autre page, le sélecteur est réaligné sur la clé partagée, même si son
+# ancien état a survécu. Ordre : présélection du bouton du Dashboard, clé partagée, NBA. Valeur
+# écrite dans session_state avant la création du widget (key=, sans index=), même principe que
+# "Saison" plus bas.
+sport_keys = list(SPORTS.keys())
+_entering_page = st.session_state.get("current_page") != "radar"
+st.session_state["current_page"] = "radar"
+
+
+def _reset_season() -> None:
+    # Changement de sport ou de compétition : saison remise au défaut du nouveau choix, comme le
+    # Dashboard (sinon "2025-26", valide en rugby et en NBA, serait gardée en passant de l'un à
+    # l'autre, alors que la NBA s'ouvre sur "2024-25").
+    st.session_state.pop("radar_season", None)
+
+
+def _sync_from_shared(widget_key: str, shared, valid: list, default, forced: bool = False) -> None:
+    """Valeur initiale d'un sélecteur partagé entre pages, écrite avant sa création : `shared`
+    (présélection ou clé partagée) à l'arrivée sur la page, si `forced` (présélection), ou si la
+    valeur du widget n'est plus valide ; sinon `default`. Saison remise au défaut si une valeur
+    déjà là est remplacée."""
+    current = st.session_state.get(widget_key)
+    if current in valid and not ((_entering_page or forced) and shared in valid and shared != current):
+        return
+    new = shared if shared in valid else default
+    if current is not None and current != new:
+        _reset_season()
+    st.session_state[widget_key] = new
+
+
+_sync_from_shared(
+    "radar_sport", preselected_sport if preselected_sport in SPORTS else st.session_state.get("selected_sport"),
+    sport_keys, "nba", forced=preselected_sport in SPORTS,
+)
+sport_key = st.sidebar.selectbox(
+    "Sport", options=sport_keys,
+    format_func=lambda k: SPORTS[k].label if SPORTS[k].available else f"{SPORTS[k].label} (bientôt disponible)",
+    key="radar_sport", on_change=_reset_season,
+)
+st.session_state["selected_sport"] = sport_key
+sport = SPORTS[sport_key]
 if not sport.radar_axes or sport.compute_radar_scores is None:
     st.title("Radar de comparaison")
     st.info("Le radar de comparaison n'est pas encore disponible pour ce sport.")
     st.stop()
 
-axes = sport.radar_axes
+# Compétition (rugby) : même ordre de priorité que le sport (selected_competition partagée).
+competition = None
+if sport.competitions:
+    _competitions = {c.key: c for c in sport.competitions}
+    _forced = preselected_competition in _competitions
+    _sync_from_shared(
+        "radar_competition",
+        preselected_competition if _forced else st.session_state.get("selected_competition"),
+        list(_competitions), next(k for k, c in _competitions.items() if c.available), forced=_forced,
+    )
+    competition = _competitions[st.sidebar.selectbox(
+        "Compétition", options=list(_competitions),
+        format_func=lambda k: _competitions[k].label if _competitions[k].available
+        else f"{_competitions[k].label} (bientôt disponible)",
+        key="radar_competition", on_change=_reset_season,
+    )]
+    st.session_state["selected_competition"] = competition.key
+    if not competition.available:
+        st.title(f"Radar de comparaison · {competition.label}")
+        st.info(
+            f"{competition.label} arrive dans une prochaine version. Compétitions disponibles : "
+            + ", ".join(f"**{c.label}**" for c in sport.competitions if c.available) + "."
+        )
+        st.stop()
+competition_key = competition.key if competition else None
+seasons = competition.seasons if competition else sport.seasons
 
 # Même dict que STATS_PERIOD_OPTIONS dans Dashboard.py (dupliqué, voir docstring du module et son
 # commentaire sur le retrait du mode "regular_playoffs") : reste cohérent avec ce que "les stats"
-# veulent dire ailleurs dans l'app -- ordre et défaut (premier élément = index=0 plus bas) à
-# resynchroniser à la main si Dashboard.py change encore.
-STATS_PERIOD_OPTIONS = {
+# veulent dire ailleurs dans l'app -- ordre et défaut (premier élément) à resynchroniser à la main
+# si Dashboard.py change encore. Un autre sport fournit ses périodes (sport.stats_periods).
+STATS_PERIOD_OPTIONS = sport.stats_periods or {
     "Saison régulière": "regular",
     "Playoffs uniquement": "playoffs",
 }
-
-# Pré-sélection déposée par Dashboard.py (bouton "Voir le profil radar") — pop() pour ne
-# pré-sélectionner qu'une fois.
-preselected_player = st.session_state.pop("radar_preselect_player", None)
-preselected_season = st.session_state.pop("radar_preselect_season", None)
 
 
 # key= (pas index=) pour que le choix de l'utilisateur survive aux reruns suivants : passer un
@@ -143,26 +221,45 @@ preselected_season = st.session_state.pop("radar_preselect_season", None)
 # (dataset Kaggle ratin21 pas encore à jour pour 2025-26, voir son commentaire) -- le radar
 # n'affiche pas le salaire directement, mais reste sur la même saison par défaut que le reste de
 # l'app pour la cohérence. Sans incidence sur les axes du radar eux-mêmes (aucun n'est dérivé du
-# salaire).
-if "radar_season" not in st.session_state:
-    st.session_state["radar_season"] = (
-        preselected_season if preselected_season in sport.seasons
-        else ("2024-25" if "2024-25" in sport.seasons else sport.seasons[0])
-    )
-season = st.sidebar.selectbox("Saison", options=sport.seasons, key="radar_season")
-stats_period_label = st.sidebar.selectbox(
-    "Statistiques utilisées", options=list(STATS_PERIOD_OPTIONS.keys()), index=0,
-)
+# salaire). Défaut repris de sport.default_season (NBA : "2024-25"), sinon la plus récente. Saison
+# revérifiée à chaque run : après un changement de sport ou de compétition, elle peut ne plus
+# faire partie des options ("2024-25" contre "2026"), ce qui ferait lever une erreur au widget.
+_default_season = sport.default_season if sport.default_season in seasons else seasons[0]
+if preselected_season in seasons:
+    st.session_state["radar_season"] = preselected_season
+elif st.session_state.get("radar_season") not in seasons:
+    st.session_state["radar_season"] = _default_season
+season = st.sidebar.selectbox("Saison", options=seasons, key="radar_season")
+# Période : key= pour la même raison que la saison (présélection possible depuis le Dashboard en
+# rugby), revérifiée de même au changement de sport.
+_period_labels = list(STATS_PERIOD_OPTIONS.keys())
+_preselected_period_label = next(
+    (lbl for lbl, p in STATS_PERIOD_OPTIONS.items() if p == preselected_period), None)
+if _preselected_period_label:
+    st.session_state["radar_period"] = _preselected_period_label
+elif st.session_state.get("radar_period") not in _period_labels:
+    st.session_state["radar_period"] = _period_labels[0]
+stats_period_label = st.sidebar.selectbox("Statistiques utilisées", options=_period_labels, key="radar_period")
 stats_period = STATS_PERIOD_OPTIONS[stats_period_label]
+# Période après la saison dans les textes : entre parenthèses, sauf si son libellé en contient déjà
+# (rugby : "Saison complète (phases finales incluses)"), alors séparée par un point médian.
+period_txt = f"· {stats_period_label}" if "(" in stats_period_label else f"({stats_period_label})"
 
 
-@st.cache_data(show_spinner="Chargement des données NBA (nba_api + Kaggle)...")
-def load_data(sport_key: str, season: str, period: str) -> pd.DataFrame:
-    return SPORTS[sport_key].get_player_stats(season, force_refresh=False, period=period)
+# La compétition fait partie de la clé de cache (None pour la NBA, dont get_player_stats ne reçoit
+# alors aucun argument competition), même principe que Dashboard.py. Texte du chargement propre au
+# sport (sport.loading_label), d'où st.cache_data appliqué ici plutôt qu'en décorateur.
+def _get_player_stats(sport_key: str, competition_key: str | None, season: str, period: str) -> pd.DataFrame:
+    kwargs = {"competition": competition_key} if competition_key else {}
+    return SPORTS[sport_key].get_player_stats(season, force_refresh=False, period=period, **kwargs)
 
+
+load_data = st.cache_data(
+    show_spinner=sport.loading_label or "Chargement des données NBA (nba_api + Kaggle)..."
+)(_get_player_stats)
 
 try:
-    df = load_data(sport.key, season, stats_period)
+    df = load_data(sport.key, competition_key, season, stats_period)
 except Exception as exc:
     st.error(f"Impossible de charger les données pour {season} : {exc}")
     st.stop()
@@ -175,15 +272,44 @@ if df.empty:
 # nba.compute_radar_scores) doit utiliser un seuil "échantillon court" adapté à la période --
 # 15 matchs est structurellement intenable en playoffs (même correction que le badge du scatter
 # principal, voir Dashboard.py/PLAYOFF_LOW_SAMPLE_THRESHOLD_CAVEAT).
-df = sport.compute_radar_scores(df, period=stats_period)
+df = sport.compute_radar_scores(
+    df, period=stats_period, **({"competition": competition_key} if competition_key else {})
+)
+
+# Joueur identifié par key_col (nom en NBA ; identifiant en rugby, pour les homonymes), affiché
+# par label_col.
+label_col = sport.player_label_col or "player"
+key_col = sport.player_key_col or label_col
+labels = df.drop_duplicates(key_col).set_index(key_col, drop=False)[label_col]
 
 # Un joueur sans aucun match sur la période (ex: n'a pas fait les playoffs) aurait un radar
-# entièrement vide — exclu de la liste plutôt que proposé pour un résultat vide/trompeur.
-eligible = df[df["games_played"].fillna(0) > 0]
-player_options = sorted(eligible["player"].dropna().unique().tolist())
+# entièrement vide — exclu de la liste plutôt que proposé pour un résultat vide/trompeur. De même
+# pour un joueur sans poste (radar_eligible, rugby : "Indéterminé") : ni axes ni référence.
+eligible_mask = df["games_played"].fillna(0) > 0
+if "radar_eligible" in df.columns:
+    eligible_mask &= df["radar_eligible"]
+eligible = df[eligible_mask]
+if key_col == label_col:
+    player_options = sorted(eligible[key_col].dropna().unique().tolist())
+else:
+    player_options = sorted(eligible[key_col].dropna().unique().tolist(), key=lambda k: labels[k])
+
+
+# Libellé d'un joueur dans la liste : son nom, et son poste quand le sport a un identifiant
+# distinct du nom (rugby : "Nom (Club) · Pilier (banc)").
+if key_col != label_col and "position_label" in df.columns:
+    _position_labels = df.drop_duplicates(key_col).set_index(key_col)["position_label"]
+    option_labels = {k: f"{labels[k]} · {_position_labels[k]}" for k in player_options}
+else:
+    option_labels = {}
+
+
+def _option_label(key) -> str:
+    return option_labels.get(key, labels.get(key, key) if key_col != label_col else key)
+
 
 if not player_options:
-    st.warning(f"Aucun joueur avec des données exploitables pour {season} ({stats_period_label}).")
+    st.warning(f"Aucun joueur avec des données exploitables pour {season} {period_txt}.")
     st.stop()
 
 MAX_PLAYERS = 4
@@ -194,26 +320,39 @@ MAX_PLAYERS = 4
 # partie (absent de la nouvelle saison/période) -- st.multiselect lève une erreur si une valeur
 # de key= n'est pas dans options, d'où ce filtrage explicite. Repli sur le premier joueur
 # seulement si le filtrage a tout retiré : une sélection vidée à la main par l'utilisateur reste
-# vide (message plus bas), sinon le joueur retiré reviendrait aussitôt.
-if "radar_players" not in st.session_state:
-    st.session_state["radar_players"] = [
-        preselected_player if preselected_player in player_options else player_options[0]
-    ]
+# vide (message plus bas), sinon le joueur retiré reviendrait aussitôt. Une présélection du
+# Dashboard remplace la sélection en cours (changement de sport compris).
+if preselected_player in player_options:
+    st.session_state["radar_players"] = [preselected_player]
+elif "radar_players" not in st.session_state:
+    st.session_state["radar_players"] = [player_options[0]]
 else:
     kept = [p for p in st.session_state["radar_players"] if p in player_options]
     if kept != st.session_state["radar_players"]:
         st.session_state["radar_players"] = kept or [player_options[0]]
 players = st.sidebar.multiselect(
     f"Joueurs (1 à {MAX_PLAYERS})", options=player_options, max_selections=MAX_PLAYERS, key="radar_players",
+    format_func=_option_label,
 )
 
 if preselected_player and preselected_player not in player_options:
-    st.info(
-        f"**{preselected_player}** n'a pas de données exploitables pour {season} "
-        f"({stats_period_label}) : sélectionne une autre saison ou un autre joueur."
+    _no_position = (
+        "radar_eligible" in df.columns
+        and not df.loc[df[key_col] == preselected_player, "radar_eligible"].any()
+        and (df[key_col] == preselected_player).any()
     )
+    if _no_position:
+        st.info(
+            f"**{preselected_label}** n'a pas de poste déterminé (remplaçant jamais titulaire, "
+            "maillot 19 à 23) : pas de radar possible, faute de joueurs de référence."
+        )
+    else:
+        st.info(
+            f"**{preselected_label}** n'a pas de données exploitables pour {season} "
+            f"{period_txt} : sélectionne une autre saison ou un autre joueur."
+        )
 
-st.title(f"Radar de comparaison · {season}")
+st.title(" · ".join(["Radar de comparaison"] + ([competition.label] if competition else []) + [season]))
 
 # Toggle Indice / Centile (inspiré de Data'Scout) : les deux lisent les colonnes déjà calculées
 # par compute_radar_scores (radar_<key>_score / radar_<key>_percentile), même référence (poste +
@@ -256,8 +395,8 @@ NO_ATTEMPT_R_STEP = 6
 PLAYER_TEXT_POSITIONS = ["top center", "bottom center"]
 
 
-def _player_row(player_name: str) -> pd.Series | None:
-    row = df[df["player"] == player_name]
+def _player_row(player_key) -> pd.Series | None:
+    row = df[df[key_col] == player_key]
     if row.empty:
         return None
     return row.iloc[0]
@@ -267,9 +406,17 @@ def _player_row(player_name: str) -> pd.Series | None:
 # associée sur le graph -- seule la bordure/l'accent est colorée, le texte reste dans la couleur
 # héritée du thème Streamlit (currentColor) pour rester lisible en clair comme en sombre, sans
 # pouvoir détecter le thème réel du visiteur côté Python (voir plus bas pour la même contrainte
-# sur le fond du radar).
-def _player_card(column, player_name: str, color: str) -> None:
-    row = _player_row(player_name)
+# sur le fond du radar). Lignes en plus selon le sport (sport.radar_card_lines, rugby : poste,
+# titularisations, cartons, échantillon court), aucune en NBA.
+def _player_card(column, player_key, color: str) -> None:
+    row = _player_row(player_key)
+    player_name = row[label_col] if row is not None else player_key
+    extra = ""
+    if row is not None and sport.radar_card_lines:
+        extra = "".join(
+            f'<div style="opacity: 0.7; font-size: 0.85rem;">{html.escape(line, quote=False)}</div>'
+            for line in sport.radar_card_lines(row)
+        )
     with column:
         games = row.get("games_played") if row is not None else None
         if row is not None and pd.notna(games):
@@ -280,15 +427,26 @@ def _player_card(column, player_name: str, color: str) -> None:
         st.markdown(
             f"""<div style="border-left: 4px solid {color}; padding: 0.3rem 0.9rem;">
             <div style="font-weight: 600; font-size: 1.05rem;">{player_name}</div>
-            <div style="opacity: 0.7; font-size: 0.85rem;">{season} ({stats_period_label}) · {games_txt}</div>
+            <div style="opacity: 0.7; font-size: 0.85rem;">{season} {period_txt} · {games_txt}</div>{extra}
             </div>""",
             unsafe_allow_html=True,
         )
 
 
 if players:
-    for column, player_name, color in zip(st.columns(len(players)), players, PLAYER_COLORS):
-        _player_card(column, player_name, color)
+    for column, player_key, color in zip(st.columns(len(players)), players, PLAYER_COLORS):
+        _player_card(column, player_key, color)
+
+# Axes selon les postes des joueurs comparés (sport.radar_axes_for, rugby : intersection des axes
+# de ces postes), avec leurs notes ; sinon les mêmes axes pour tout le monde (NBA).
+selected_positions = [
+    row["position_group"] for row in (_player_row(p) for p in players)
+    if row is not None and "position_group" in row
+]
+if sport.radar_axes_for:
+    axes, axes_notes = sport.radar_axes_for(selected_positions)
+else:
+    axes, axes_notes = sport.radar_axes, []
 
 # Marge invisible ajoutée à la fin de chaque cellule d'axe du tableau récap. Streamlit ajuste la
 # largeur des colonnes (width="content") en mesurant leur texte, mais dans le navigateur cette
@@ -303,25 +461,36 @@ def _format_raw(axis: dict, row: pd.Series) -> str:
     """Valeur réelle d'un axe au format de RADAR_AXES["fmt"] (les pourcentages nba_api sont des
     fractions, 0.152 pour 15,2 %), suivie du nombre de tentatives entre parenthèses pour les axes
     de tir ("88.7% (669 tent.)"), ou seulement "0 tent." sans aucune tentative (le pourcentage
-    n'a alors pas de sens). "n.d." si manquante. Même texte au survol et dans le tableau."""
+    n'a alors pas de sens). "n.d." si manquante. Même texte au survol et dans le tableau.
+    Variante rugby : "fmt" est une fonction (virgule décimale), et un axe avec "made_col" affiche
+    réussis / tentatives ("84 % (16/19)", ou "aucune tentative")."""
     value = row.get(axis["stat_col"])
     attempts = row.get(axis["attempts_col"]) if "attempts_col" in axis else None
     if attempts is not None and not pd.isna(attempts) and attempts == 0:
-        return "0 tent."
+        return "aucune tentative" if "made_col" in axis else "0 tent."
     if pd.isna(value):
         return "n.d."
-    text = axis.get("fmt", "{:.1f}").format(value)
-    return text if attempts is None or pd.isna(attempts) else f"{text} ({attempts:.0f} tent.)"
+    fmt = axis.get("fmt", "{:.1f}")
+    text = fmt(value) if callable(fmt) else fmt.format(value)
+    if attempts is None or pd.isna(attempts):
+        return text
+    if "made_col" in axis:
+        return f"{text} ({row.get(axis['made_col']):.0f}/{attempts:.0f})"
+    return f"{text} ({attempts:.0f} tent.)"
 
 
 def _empty_axis_reason(axis: dict, row: pd.Series) -> str:
     """Raison affichée au survol d'un axe vide : aucune tentative, ou volume sous le minimum par
-    match (nba.MIN_FG3A_PER_GAME / MIN_FTA_PER_GAME) pour un axe de tir."""
+    match (nba.MIN_FG3A_PER_GAME / MIN_FTA_PER_GAME) pour un axe de tir, ou sous le minimum de la
+    saison ("min_attempts", rugby : seuil NC)."""
     attempts = row.get(axis["attempts_col"]) if "attempts_col" in axis else None
     if attempts is None or pd.isna(attempts):
         return "aucune donnée"
     if attempts == 0:
         return "aucune tentative"
+    if "min_attempts" in axis:
+        return (f"volume trop faible : {attempts:.0f} {axis['attempts_label']}, "
+                f"minimum {axis['min_attempts']}")
     return f"volume trop faible ({attempts:.0f} tentatives en {row.get('games_played'):.0f} matchs)"
 
 
@@ -334,11 +503,12 @@ fig = go.Figure()
 recap_rows = []
 
 show_text = len(players) <= MAX_PLAYERS_WITH_TEXT
-for i, player_name in enumerate(players):
-    row = _player_row(player_name)
+for i, player_key in enumerate(players):
+    row = _player_row(player_key)
     if row is None:
-        st.info(f"**{player_name}** ne correspond à aucune donnée pour {season} ({stats_period_label}).")
+        st.info(f"**{_option_label(player_key)}** ne correspond à aucune donnée pour {season} {period_txt}.")
         continue
+    player_name = row[label_col]
     scores = [row.get(f"radar_{a['key']}{score_suffix}") for a in axes]
     # Axe sans valeur (ex. aucune tentative à 3 points) : point retiré du tracé plutôt que placé au
     # centre, où il se lirait comme un score de 0 ; le polygone relie les deux axes voisins par un
@@ -425,6 +595,12 @@ for i, player_name in enumerate(players):
         else:
             cell = f"{raw}  ·  " + ("NC" if "attempts_col" in a else "n.d.")
         recap_row[a["label"]] = cell + RECAP_CELL_END_MARGIN
+    # Colonnes hors radar (rugby : axes retirés, essais, discipline, % au pied, cartons).
+    if sport.radar_extra_columns:
+        recap_row.update({
+            col: text + RECAP_CELL_END_MARGIN
+            for col, text in sport.radar_extra_columns(row, selected_positions).items()
+        })
     recap_rows.append(recap_row)
 
 if not fig.data:
@@ -481,20 +657,30 @@ fig.update_layout(
 )
 st.plotly_chart(fig, width="stretch")
 
+# Début propre au sport (sport.radar_reference_caption, rugby : 10 postes et seuil de référence),
+# fin commune selon le mode d'affichage.
+_percent = "90 %" if sport.french_format else "90%"
 st.caption(
-    "Chaque axe est un z-score par poste (Intérieur / Ailier / Extérieur) : la position du "
-    "joueur est mesurée par rapport aux autres joueurs de référence au même poste, pas à "
-    "l'ensemble de la ligue." + (
+    (sport.radar_reference_caption or (
+        "Chaque axe est un z-score par poste (Intérieur / Ailier / Extérieur) : la position du "
+        "joueur est mesurée par rapport aux autres joueurs de référence au même poste, pas à "
+        "l'ensemble de la ligue."
+    )) + (
         " Affiché ici mis à l'échelle 0-100 pour la lecture (clip à ±3 écarts-types) : 50 = dans "
         "la moyenne des joueurs à son poste sur cet axe."
         if display_mode == "Indice" else
         " Affiché ici en rang percentile direct (rang / effectif) dans la même population de "
-        "référence : 90 = ce joueur fait mieux que 90% des joueurs de référence à son poste."
+        f"référence : 90 = ce joueur fait mieux que {_percent} des joueurs de référence à son poste."
     )
 )
 
-for caveat in (sport.radar_caveats or []):
-    st.caption(caveat)
+# Notes qui dépendent des joueurs comparés (axes retirés, peu d'axes en commun, effectif de
+# référence de chaque poste), puis avertissements fixes du sport.
+_notes = list(axes_notes)
+if sport.radar_notes_fn:
+    _notes += sport.radar_notes_fn(df, selected_positions)
+for note in _notes + list(sport.radar_caveats or []):
+    st.caption(note)
 
 # Même caveat que PLAYOFF_LOW_SAMPLE_THRESHOLD_CAVEAT dans Dashboard.py (dupliqué, pas dans
 # sport.radar_caveats car ce n'est pas propre à un axe -- ça concerne la population de référence
@@ -510,7 +696,8 @@ if stats_period == "playoffs":
 
 RECAP_PLAYER_WIDTH = 210
 if recap_rows:
-    with st.expander(f"Valeurs brutes par axe (valeur réelle  ·  {display_mode.lower()})", expanded=True):
+    _recap_title = "Valeurs brutes par axe" + (", puis hors radar" if sport.radar_extra_columns else "")
+    with st.expander(f"{_recap_title} (valeur réelle  ·  {display_mode.lower()})", expanded=True):
         # Colonnes d'axes à la largeur de leur contenu (en-tête compris), comme un double-clic
         # sur le bord de colonne : il faut à la fois ne pas leur donner de largeur et afficher le
         # tableau en width="content", car en width="stretch" Streamlit élargit toute colonne
@@ -521,5 +708,8 @@ if recap_rows:
             column_config={
                 "Joueur": st.column_config.TextColumn(width=RECAP_PLAYER_WIDTH, pinned=True),
                 **{a["label"]: st.column_config.TextColumn(help=a.get("help")) for a in axes},
+                **{col: st.column_config.TextColumn(help=(sport.radar_extra_help or {}).get(col))
+                   for col in pd.DataFrame(recap_rows).columns
+                   if col != "Joueur" and col not in {a["label"] for a in axes}},
             },
         )

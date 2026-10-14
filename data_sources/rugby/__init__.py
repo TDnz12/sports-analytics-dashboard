@@ -7,14 +7,18 @@ Aucun appel réseau dans ce paquet (un test le vérifie) : les données sont té
 par scripts/rugby_download.py, transformées par scripts/rugby_build.py, puis seulement lues depuis
 data_cache/. Le schéma commun aux deux sources est décrit dans schema.py.
 
-État : Top 14 et Pro D2 disponibles dans le Dashboard (lot 4) ; Six Nations "bientôt disponible"
-jusqu'au lot 8. Radar rugby au lot 6.
+État : Top 14 et Pro D2 disponibles dans le Dashboard (lot 4) et le Radar (lot 6, radar.py) ; Six
+Nations "bientôt disponible" jusqu'au lot 8.
 """
 
 from __future__ import annotations
 
 from ..base import CompetitionConfig
 from .positions import POSITION_GROUPS, UNDETERMINED
+from .radar import (
+    RADAR_AXES, RADAR_CAVEATS, RADAR_EXTRA_HELP, RADAR_REFERENCE_CAPTION, compute_radar_scores,
+    radar_axes_for, radar_card_lines, radar_extra_columns, radar_notes,
+)
 from .schema import COMPETITION_SPECS, season_labels
 from .stats import (
     DETAIL_LEAD_COLUMNS, DETAIL_TAIL_COLUMNS, LOW_SAMPLE_LABEL, METRICS, SOURCE_CAPTION,

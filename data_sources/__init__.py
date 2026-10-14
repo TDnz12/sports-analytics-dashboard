@@ -136,6 +136,23 @@ class SportConfig:
     # Tri par défaut de ce tableau (colonnes, sans tenir compte des accents ni de la casse ; la
     # saison est ajoutée en mode "Toutes les saisons") ; None = tri sur Y décroissant.
     detail_sort_columns: Optional[list] = None
+    # --- Réglages du Radar propres au sport (pages/1_Radar_de_comparaison.py). Tous optionnels :
+    # None = rendu NBA historique. ---
+    # Colonne qui identifie un joueur dans la sélection (homonymes) ; None = player_label_col.
+    player_key_col: Optional[str] = None
+    # radar_axes_for(postes des joueurs comparés) -> (axes, notes) : axes affichés selon les postes
+    # (rugby : intersection des axes des postes) ; None = radar_axes pour tout le monde.
+    radar_axes_for: Optional[Callable[[list], tuple]] = None
+    # radar_notes_fn(df noté, postes) -> notes qui dépendent des données (effectif de référence).
+    radar_notes_fn: Optional[Callable[..., list]] = None
+    # radar_card_lines(ligne du joueur) -> lignes de texte ajoutées à sa carte.
+    radar_card_lines: Optional[Callable[[pd.Series], list]] = None
+    # radar_extra_columns(ligne, postes) -> {colonne : texte} hors radar du tableau récap, avec
+    # l'aide de chaque colonne dans radar_extra_help.
+    radar_extra_columns: Optional[Callable[..., dict]] = None
+    radar_extra_help: Optional[dict] = None
+    # Début de la légende sous le radar (référence du z-score) ; None = texte NBA.
+    radar_reference_caption: Optional[str] = None
 
 
 # --- Sport actif ---------------------------------------------------------
@@ -172,8 +189,8 @@ NBA = SportConfig(
 )
 
 # Rugby : performance uniquement, sans salaires. Top 14 et Pro D2 livrés (lot 4), Six Nations
-# "bientôt disponible". Radar et classement des équipes pas encore branchés (None). Voir
-# data_sources/rugby/.
+# "bientôt disponible". Radar branché au lot 6 (data_sources/rugby/radar.py) ; classement des
+# équipes pas encore branché (None). Voir data_sources/rugby/.
 RUGBY = SportConfig(
     key="rugby",
     label="Rugby",
@@ -209,6 +226,16 @@ RUGBY = SportConfig(
     detail_lead_columns=rugby.DETAIL_LEAD_COLUMNS,
     detail_tail_columns=rugby.DETAIL_TAIL_COLUMNS,
     detail_sort_columns=["last_name", "first_name"],
+    radar_axes=rugby.RADAR_AXES,
+    compute_radar_scores=rugby.compute_radar_scores,
+    radar_caveats=rugby.RADAR_CAVEATS,
+    player_key_col="player_uid",
+    radar_axes_for=rugby.radar_axes_for,
+    radar_notes_fn=rugby.radar_notes,
+    radar_card_lines=rugby.radar_card_lines,
+    radar_extra_columns=rugby.radar_extra_columns,
+    radar_extra_help=rugby.RADAR_EXTRA_HELP,
+    radar_reference_caption=rugby.RADAR_REFERENCE_CAPTION,
 )
 
 # --- Sports à venir (aucune implémentation, juste affichés "bientôt") ----
