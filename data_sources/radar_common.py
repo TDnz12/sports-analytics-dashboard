@@ -32,10 +32,13 @@ def _percentile_by_position(
 ) -> pd.Series:
     """Rang percentile de `impact_col` PAR GROUPE DE POSTE — même principe et mêmes paramètres
     que _zscore_by_position (même `stat_source`/`apply_to`/`stat_mask`), en rang plutôt qu'en
-    écart-type : pourcentage de joueurs de RÉFÉRENCE (même poste, lignes de `stat_source` où
-    `stat_mask` est vrai) que ce joueur égale ou dépasse sur cet axe. Calcul volontairement simple
-    (rang / effectif, via np.searchsorted) plutôt qu'une fonction de bibliothèque externe (évite
-    une dépendance à scipy pour un calcul déjà trivial avec numpy/pandas)."""
+    écart-type : rang du joueur parmi les joueurs de RÉFÉRENCE (même poste, lignes de
+    `stat_source` où `stat_mask` est vrai), en pourcentage de leur effectif, les ex aequo
+    partageant leur rang moyen (décision C3 de l'audit rugby : sinon les 27 deuxièmes lignes à 0
+    touche volée sur 70, Pro D2 2025-26, étaient tous au 39e centile, au lieu du 20e). Sans égalité,
+    ou pour une valeur absente de la référence, rang = nombre de valeurs de référence inférieures
+    ou égales, comme avant. Calcul volontairement simple (np.searchsorted) plutôt qu'une fonction
+    de bibliothèque externe (évite une dépendance à scipy)."""
     ref = stat_source.loc[stat_mask]
     result = pd.Series(np.nan, index=apply_to.index, dtype=float)
     for group, ref_group in ref.groupby("position_group"):
@@ -47,7 +50,13 @@ def _percentile_by_position(
         col_vals = apply_to.loc[in_group, impact_col]
         valid = col_vals.notna()
         idx = col_vals[valid].index
-        ranks = np.searchsorted(values, col_vals[valid].to_numpy(), side="right")
+        x = col_vals[valid].to_numpy()
+        left = np.searchsorted(values, x, side="left")    # valeurs de référence strictement inférieures
+        right = np.searchsorted(values, x, side="right")  # inférieures ou égales
+        # Rang moyen des ex aequo : t valeurs égales au-dessus de b valeurs ont les rangs b+1 à b+t,
+        # de moyenne b + (t + 1) / 2 = right - (t - 1) / 2. Sans égalité (t = 1) ou pour une valeur
+        # absente de la référence (t = 0), le rang reste right.
+        ranks = right - np.maximum(right - left - 1, 0) / 2
         result.loc[idx] = ranks / n * 100
     return result
 

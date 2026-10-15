@@ -42,6 +42,21 @@ class TestByPosition(unittest.TestCase):
         np.testing.assert_allclose(p.to_numpy(), [100 / 3, 200 / 3, 100] * 2)
 
 
+    def test_centile_rang_moyen_des_ex_aequo(self):
+        # Décision C3 de l'audit rugby : 3 valeurs égales sur 5 partagent leur rang moyen (2), les
+        # autres gardent le leur ; une valeur absente de la référence n'est pas concernée.
+        df = pd.DataFrame({"position_group": ["A"] * 6, "v": [0.0, 0.0, 0.0, 1.0, 2.0, 0.5]})
+        mask = pd.Series([True] * 5 + [False])
+        p = rc._percentile_by_position(df, df, "v", mask)
+        np.testing.assert_allclose(p.to_numpy(), [40, 40, 40, 80, 100, 60])
+
+    def test_centile_ex_aequo_hors_reference(self):
+        # Joueur hors référence à égalité avec 3 joueurs de référence : même rang moyen qu'eux.
+        df = pd.DataFrame({"position_group": ["A"] * 5, "v": [0.0, 0.0, 0.0, 1.0, 0.0]})
+        p = rc._percentile_by_position(df, df, "v", pd.Series([True] * 4 + [False]))
+        np.testing.assert_allclose(p.to_numpy(), [50, 50, 50, 100, 50])
+
+
 class TestPadding(unittest.TestCase):
     def test_moyenne_du_poste(self):
         df = _df()
