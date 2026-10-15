@@ -2,6 +2,9 @@
 
 Ce document détaille les choix méthodologiques et leurs itérations, pour qui veut le détail complet au-delà du README.
 
+Il a deux parties : la NBA (les sections ci-dessous jusqu'à la métrique défensive), puis le
+[rugby](#rugby-top-14-et-pro-d2) (Top 14 et Pro D2).
+
 ## Mode "Toutes les saisons"
 
 En plus du sélecteur saison par saison, le dashboard propose une vue combinée ("Toutes les
@@ -139,13 +142,6 @@ fautes (Tyus Jones, 51/57, 0,70 tentative par match) : d'où 0,5.
 **Limites connues.** Scoring, Passe, Rebond, Interceptions et Contres sont des valeurs par match :
 elles favorisent les joueurs qui jouent beaucoup, ce qui est assumé pour un radar de production.
 
-**Rugby, stats par 80 hors radar.** Dans le tableau du radar rugby, les stats par 80 minutes qui
-ne sont pas sur le radar (pénalités concédées, ballons perdus, axes retirés quand les postes
-diffèrent) sont rapprochées de la moyenne du poste, même logique que le padding des pourcentages :
-`(total + M × taux moyen du poste par minute) / (minutes + M) × 80`, avec pour chaque stat le M
-de la calibration (split-half, de 89 minutes pour les touches gagnées à 1 982 pour les ballons
-perdus), la valeur brute restant affichée entre parenthèses.
-
 ## Métrique défensive individuelle (piste abandonnée)
 
 Une tentative a été faite pour intégrer une métrique de "défense" individuelle
@@ -179,3 +175,216 @@ endpoint s'est révélé peu fiable dans nos tests (JSONDecodeError, 3/3 essais)
 Conclusion : aucune métrique défensive individuelle n'a été ajoutée au dashboard.
 À réévaluer si LeagueDashPtDefend devient exploitable, ou si une autre source
 de données fiable apparaît.
+
+# Rugby (Top 14 et Pro D2)
+
+**Données arrêtées à la fin de la saison 2025-26** : dernier match du Pro D2 le 6 juin 2026,
+finale du Top 14 le 27 juin 2026.
+
+## Source et saisons
+
+Les stats viennent du flux InCrowd (rugbyviz) : compositions, stats par joueur et par match,
+remplacements, cartons et actions de score. Les données sont téléchargées une fois en local,
+puis mises en cache dans `data_cache/` : le site ne fait aucun appel réseau pour le rugby.
+
+| Compétition | Saisons | Matchs par saison |
+|---|---|---|
+| Top 14 | 2021-22 à 2025-26 | 187 (182 de phase régulière, 26 journées, et 5 de phases finales) |
+| Pro D2 | 2022-23 à 2025-26 | 245 (240 de phase régulière, 30 journées, et 5 de phases finales) |
+
+Les 5 matchs de phases finales sont les 2 barrages, les 2 demi-finales et la finale. Un match est
+classé en phase finale par son numéro de journée (au-delà de 26 ou de 30), pas par le type de
+journée de la source, qui range les phases finales du Top 14 2021-22 en phase régulière.
+
+Deux périodes au choix : « saison complète » (phases finales comprises, par défaut) et « phase
+régulière ».
+
+## Minutes jouées
+
+La source donne les minutes de chaque joueur sur une base de 80, temps d'exclusion déduit. Elles
+sont contrôlées équipe par équipe : la somme des minutes d'une équipe doit valoir 15 x 80 =
+1 200 (15 x 100 en prolongation), moins le temps d'exclusion de ses joueurs, à 5 minutes près.
+
+Les minutes sont reconstruites à partir des remplacements et des cartons dans deux cas :
+- en prolongation, toujours : la source y est fausse (finale du Top 14 2024-25 : 1 557 minutes
+  pour Bordeaux-Bègles au lieu de 1 480, la reconstruction en donne 1 481) ;
+- quand la somme de l'équipe sort de la tolérance alors que la reconstruction y entre.
+
+Règles de la reconstruction : les titulaires entrent à 0, chaque sortie ferme un passage sur le
+terrain et chaque entrée en ouvre un (retours après protocole commotion compris). Un carton jaune
+retire les 10 minutes d'exclusion, un rouge ferme le passage.
+
+Sur les 9 saisons, 29 équipes-matchs (667 lignes joueur-match) ont des minutes reconstruites.
+Une minute impossible devient inconnue au lieu d'être gardée : c'est le cas d'une seule ligne,
+un remplaçant de Brive en Pro D2 2023-24 (Julien Delannoy), à qui la source donnait -10 minutes.
+
+## Scores recomptés et compteurs corrigés
+
+- **Scores perdus par la source.** Dans 16 équipes-matchs sur les 9 saisons (surtout en Pro D2
+  2023-24 et 2024-25), les points des joueurs ne redonnent pas le score officiel. Les essais,
+  transformations, pénalités, drops et points de chaque joueur y sont recomptés à partir des
+  actions de score, seulement si le recomptage redonne exactement le score officiel.
+- **Compteurs contradictoires.** 19 lignes joueur-match ont des compteurs (essais, coups de pied)
+  qui contredisent à la fois les points de la source et les actions de score. Comme les points
+  et les actions de score concordent, les compteurs sont repris des actions de score (exemple :
+  2 essais rendus à Chinarro). 14 autres lignes, où ce sont les actions de score qui se
+  trompent, gardent les chiffres de la source.
+- Un essai de pénalité (7 points) revient à l'équipe, jamais à un joueur.
+
+## Points
+
+Les points d'un joueur sont ses **points totaux, essais compris**. Les classements officiels de
+réalisateurs ne comptent souvent que les points au pied : l'écart vaut alors 5 points par essai.
+Exemple, Top 14 2023-24 en phase régulière : Melvyn Jaminet a 208 points ici et 188 au
+classement officiel, soit ses 4 essais.
+
+## « A joué »
+
+Un joueur a joué un match s'il a des minutes au-dessus de 0, ou au moins une stat de jeu
+(plaquage, course, passe, points...). Les cartons ne comptent pas : un remplaçant peut en recevoir
+sans entrer en jeu. 22 lignes à 0 minute avec des stats, et la ligne aux minutes inconnues, sont
+ainsi comptées comme jouées.
+
+## Stats par 80 minutes
+
+Total divisé par les minutes jouées, multiplié par 80. Le calcul se fait stat par stat, sur les
+seuls matchs où les minutes sont connues et au-dessus de 0 et où la stat est connue : les lignes
+à 0 minute ou aux minutes inconnues comptent dans les totaux, pas dans les par 80. Les
+pourcentages sont toujours calculés sur les totaux de la saison, jamais en moyenne de
+pourcentages par match. Le % au pied compte les transformations et les pénalités, sans les
+drops.
+
+## Postes
+
+Le poste est calculé sur la saison complète : il est le même dans les deux périodes.
+- **Poste principal** : le poste le plus porté comme titulaire (maillots 1 à 15). En cas
+  d'égalité : celui où le joueur a le plus de minutes, puis le plus récent.
+- **Postes secondaires** : les autres postes portés comme titulaire, avec leur part des
+  titularisations.
+- **Poste mixte** : badge affiché quand le poste principal pèse moins de 60 % des
+  titularisations (20 à 36 joueurs par saison parmi ceux qui ont joué au moins 5 matchs). Les
+  maillots de la source sont justes : Paul Boudehent a bien été aligné en deuxième ligne par
+  La Rochelle, et Charles Ollivon titulaire en n° 4 avec Toulon, ce qui fait d'eux des « postes
+  mixtes ».
+- **Joueur jamais titulaire** : poste déduit du maillot de banc le plus porté. Le 16 est
+  talonneur, le 17 et le 18 sont piliers (règle de remplacement de la première ligne). Du 19 au
+  23, rien ne permet de déduire le poste (bancs à 5 avants et 3 arrières, ou 6 et 2) : le joueur
+  est « Indéterminé » et n'a pas de radar. C'est le cas de 36 à 52 joueurs par saison, avec au
+  plus 333 minutes sur la saison : aucun n'atteindrait le seuil de la population de référence.
+
+## Club principal
+
+Un joueur qui a changé de club en cours de saison est rangé dans le club où il a joué le plus de
+minutes. En cas d'égalité : celui où il a joué le plus de matchs, puis le plus récent. La colonne
+« Clubs » liste tous ses clubs avec le nombre de matchs joués dans chacun, et le filtre par équipe
+le trouve dans chacun d'eux.
+
+## Disponibilité
+
+Matchs sur la feuille de match divisés par les matchs de son équipe entre son premier et son
+dernier match de la saison (additionnés club par club s'il en a changé). Les absences ne se
+distinguent pas : blessure, choix de l'entraîneur ou sélection internationale.
+
+## Radar de comparaison
+
+**Population de référence.** Chaque axe est un z-score calculé dans le poste du joueur, sur les
+joueurs de la même compétition, saison et période qui ont joué au moins 5 matchs et 520 minutes.
+520 minutes est le plus grand seuil qui garde, dans chaque poste et chaque saison, au moins 12
+joueurs et 70 % des minutes jouées ; au-delà, les piliers (39 minutes par match en médiane)
+passent sous 70 %. Les 5 matchs n'ont pas d'effet à 520 minutes, mais restent pour le badge
+« Échantillon court », affiché pour les joueurs sous ces seuils. Un avertissement apparaît sous
+le radar quand un poste compte moins de 10 joueurs de référence.
+
+**Score.** Le mode Indice borne le z-score à ±3 puis le ramène sur 0-100. Le mode Centile donne le
+rang du joueur parmi les joueurs de référence de son poste. Les ex aequo partagent leur rang
+moyen : sinon, les 27 deuxièmes lignes à 0 touche volée sur 70 (Pro D2 2025-26) étaient tous au
+39e centile, au lieu du 20e. Le centile est vide quand le score l'est (référence trop petite ou
+sans écart entre joueurs).
+
+**Choix des axes.** Un axe n'est sur le radar d'un poste que si sa fiabilité, sur une saison de
+520 minutes, atteint 0,4 pour ce poste. La fiabilité mesure la part des écarts entre joueurs qui
+ne vient pas du hasard : elle compare deux moitiés de saison du même joueur (méthode
+« split-half »).
+
+| Postes | Axes |
+|---|---|
+| Tous | Plaquages, % plaquages réussis (sauf l'arrière), Mètres, % gain de ligne |
+| Avants | + Courses, Grattages, Défenseurs battus, Passes |
+| Arrières | + Défenseurs battus, Courses, Mètres au pied |
+| Pilier, talonneur, troisième ligne centre | + Passes après contact |
+| Deuxième ligne | + Touches gagnées, Touches volées |
+| Troisième ligne aile | + Touches gagnées |
+| Demi de mêlée, demi d'ouverture, arrière | + Passes |
+| Centre | + Passes après contact, Passes |
+| Ailier | + Passes après contact |
+
+L'arrière n'a pas l'axe % plaquages réussis : il tente trop peu de plaquages sur une saison
+(fiabilité 0,32). Les stats par 80 du radar sont les valeurs brutes. Quand les joueurs comparés
+ont des postes différents, seuls les axes communs à tous leurs postes restent : chaque axe affiché
+est ainsi fiable pour chacun. Une note apparaît sous 5 axes en commun.
+
+Restent hors radar, dans le tableau et la fiche du joueur : pénalités concédées et ballons perdus
+par 80 (« peu fiable sur une saison »), franchissements, essais, % au pied.
+
+## Pourcentages ajustés et « NC »
+
+Même méthode que la NBA (padding) : `(réussis + P x moyenne de référence) / (tentatives + P)`.
+Un faible volume est ramené vers la moyenne, un gros volume garde son vrai niveau. Le z-score et
+le centile utilisent ce pourcentage ajusté ; le tableau affiche aussi le vrai pourcentage. Sous un
+volume minimum sur la saison, l'axe est vide et le tableau affiche « NC » (non classé).
+
+| Pourcentage | P | NC sous | Moyenne de référence |
+|---|---|---|---|
+| % plaquages réussis | 97 | 25 plaquages tentés | celle du poste |
+| % gain de ligne | 82 | 20 courses | celle du poste |
+| % au pied (hors radar) | 146 | 35 tentatives au but | celle de tous les buteurs qualifiés |
+
+P est estimé par la méthode split-half sur les tentatives : c'est le volume auquel la moitié de
+l'écart observé entre joueurs est du bruit. Le seuil NC est le volume où le vrai pourcentage du
+joueur ne pèse que 0,2 dans son pourcentage ajusté (P / 4, arrondi à 5).
+
+## Stats par 80 hors radar
+
+Dans le tableau du radar, les stats par 80 qui ne sont pas sur le radar (pénalités concédées,
+ballons perdus, axes retirés quand les postes diffèrent) sont rapprochées de la moyenne du poste,
+d'autant plus que le joueur a peu joué, même logique que le padding des pourcentages :
+`(total + M x taux moyen du poste par minute) / (minutes + M) x 80`. M est estimé pour chaque
+stat par la méthode split-half, de 89 minutes pour les touches gagnées à 1 982 pour les ballons
+perdus. La valeur brute reste affichée entre parenthèses.
+
+## Calibration figée pour la V1
+
+Les seuils ci-dessus viennent de `scripts/rugby_calibrate.py`, sur toutes les saisons du Top 14 et
+du Pro D2. Après les corrections de données (minutes, compteurs de score, club principal), la
+calibration rejouée donne les mêmes valeurs, sauf trois : P du % au pied 167 au lieu de 146,
+seuil NC du % au pied 40 au lieu de 35, M des essais 1 923 au lieu de 1 919. Les valeurs
+d'origine sont gardées : l'estimation de P au pied est instable (une douzaine de tentatives
+corrigées la déplace de 14 %), et son effet est au plus 0,5 point de % au pied ajusté. On
+recalibrera en ajoutant des saisons, pas à chaque correction de données.
+
+## Limites connues
+
+- **Match d'accès absent.** Le match d'accès entre le Top 14 et la Pro D2 n'est dans aucune des
+  deux compétitions de la source, pour aucune saison.
+- **Noms sans accents.** La source écrit presque tous les noms sans accents (26 sur 2 319 en
+  ont), et sans nationalité on ne peut pas les rétablir de façon sûre (« Jeremy » anglais ou
+  « Jérémy » français). À l'affichage seulement : un seul nom par joueur sur toutes les saisons
+  (celui du match le plus récent, ou la forme accentuée si la source la donne ailleurs ; 29
+  joueurs ont plusieurs graphies dans la source), puis une table de 30 corrections vérifiées à
+  la main contre la presse et des bases spécialisées (accents, une faute de frappe, le prénom de
+  Charles-Henri Berguet). Les autres noms restent tels que la source les donne. Le tri ignore
+  accents et majuscules.
+- **Un identifiant pour deux noms.** En Pro D2, la source range « Aurelien Lafforgue » et
+  « Aurelien Lisena » sous le même identifiant (même club, mêmes maillots, jamais sur la même
+  feuille de match). Rien ne prouve qu'il s'agit du même joueur : chaque saison garde le nom donné
+  par la source.
+- **Stats d'impact des remplaçants.** Les stats par 80 des joueurs qui entrent souvent en cours
+  de match peuvent être plus élevées : jambes fraîches face à une défense fatiguée, extrapolées
+  sur 80 minutes. Le seuil de 520 minutes limite l'effet sur le radar, pas dans les tableaux du
+  Dashboard.
+- **Pénalités manquées par joueur** : absentes des stats du joueur, elles sont comptées à partir
+  des actions de score.
+- **Stats absentes** : pas de mêlée ni de rucks par joueur, pas de passes décisives par joueur
+  dans la source.
+- **Pas d'âge, de taille ni de poids** : les fiches joueur de la source manquaient trop souvent
+  (environ 60 % introuvables), elles ont été abandonnées.

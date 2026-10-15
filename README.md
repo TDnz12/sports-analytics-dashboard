@@ -1,10 +1,12 @@
-# NBA Salary vs Performance Dashboard
+# Sports Analytics Dashboard : NBA et rugby
 
-Dashboard interactif qui croise stats de jeu et salaires NBA, saison par saison ou sur l'historique complet. Construit avec Streamlit, architecture pensée pour accueillir d'autres sports sans réécrire le dashboard (le rugby est le prochain, voir la feuille de route).
+Dashboard interactif de stats de joueurs, construit avec Streamlit, pour deux sports. En NBA, il croise stats de jeu et salaires, saison par saison ou sur l'historique complet. En rugby (Top 14 et Pro D2), il compare la performance des joueurs, sans salaires. Le sport et la compétition se choisissent dans la barre latérale ; les pages se construisent à partir d'un registre commun des sports.
 
 **Démo en ligne :** https://sportsanalyticsdashboard.streamlit.app
 
 ## Fonctionnalités
+
+### NBA
 
 - Scatter plot salaire vs performance, sur 30 saisons NBA (1996-97 à 2025-26)
 - Vue combinée toutes saisons, badges MVP/DPOY/champion, mode saison régulière ou playoffs
@@ -12,7 +14,16 @@ Dashboard interactif qui croise stats de jeu et salaires NBA, saison par saison 
 - Normalisation en % du plafond salarial pour comparer des saisons éloignées dans le temps
 - Page Effectifs : les 6 joueurs clés de chaque équipe, modifiables, et l'effectif réel complet de chaque saison (détails ci-dessous)
 
-## Page Effectifs
+### Rugby
+
+- Top 14 de 2021-22 à 2025-26, Pro D2 de 2022-23 à 2025-26, en saison complète (phases finales comprises) ou en phase régulière
+- Dashboard : nuage de points entre deux stats au choix (totaux, par 80 minutes, pourcentages), filtres par équipe et par poste, vue toutes saisons
+- Radar de comparaison par poste, jusqu'à 4 joueurs, avec des axes choisis selon leur fiabilité
+- La page Effectifs n'existe que pour la NBA
+
+Les règles de calcul (minutes, postes, seuils, radar) sont détaillées dans la partie rugby de [METHODOLOGY.md](METHODOLOGY.md).
+
+## Page Effectifs (NBA uniquement)
 
 Une carte par équipe avec ses 6 joueurs clés de la saison : le 5 majeur et le 6e homme, étiquetés M/A/AI/AF/P (meneur, arrière, ailier, ailier fort, pivot) puis 6e.
 
@@ -42,6 +53,8 @@ streamlit run Dashboard.py
 
 ## Sources de données
 
+### NBA
+
 Les stats de jeu viennent de `nba_api` (endpoints publics de stats.nba.com, pas de clé requise). Les salaires viennent de deux datasets Kaggle, combinés automatiquement selon la saison :
 
 | Saisons | Dataset | Détails |
@@ -51,7 +64,7 @@ Les stats de jeu viennent de `nba_api` (endpoints publics de stats.nba.com, pas 
 
 1996-97 est la première saison couverte : c'est la plus ancienne où `nba_api` renvoie des données exploitables (1995-96 renvoie 0 ligne).
 
-### Configurer l'accès Kaggle
+#### Configurer l'accès Kaggle
 
 Deux options, gratuites :
 
@@ -61,11 +74,22 @@ Deux options, gratuites :
 
 Sans configuration, le dashboard fonctionne quand même : les stats de jeu s'affichent, seule la colonne salaire reste vide pour les saisons concernées.
 
-### Normalisation en % du plafond salarial
+#### Normalisation en % du plafond salarial
 
 Le plafond salarial NBA a été multiplié par plus de 6 entre 1996-97 (24,4 M$) et 2025-26 (154,6 M$), donc comparer des montants bruts entre saisons éloignées n'a pas grand sens. Le dashboard calcule aussi le salaire en % du plafond de la saison, sélectionnable comme n'importe quelle autre métrique.
 
-## Pré-remplir le cache
+### Rugby
+
+Les stats de match viennent du flux InCrowd (rugbyviz) du Top 14 et du Pro D2 : compositions, stats par joueur, remplacements, cartons et actions de score. Le site ne fait aucun appel réseau pour le rugby : tout est lu dans `data_cache/`. Mise à jour, en local :
+
+```bash
+PYTHONPATH=. python scripts/rugby_download.py incrowd --comp top14   # JSON bruts, dans ~/rugby_raw_json (hors du dépôt)
+PYTHONPATH=. python scripts/rugby_build.py --comp top14              # tables brutes et caches traités, avec un rapport de contrôle
+```
+
+Même chose avec `--comp prod2`, puis on commite les fichiers de `data_cache/`. Le dossier des JSON peut être changé avec la variable d'environnement `RUGBY_JSON_DIR`.
+
+## Pré-remplir le cache (NBA)
 
 Par défaut chaque saison est calculée au premier chargement, ce qui peut être lent. Pour pré-calculer les 30 saisons à l'avance (avant une démo par exemple) :
 
@@ -79,8 +103,11 @@ C'est aussi la seule façon de mettre à jour les données : l'application en li
 ## Tests
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -t .   # tests Python (fiabilité, table des logos, caches complets)
-.venv/bin/python tests/apptest_effectifs.py           # page Effectifs de bout en bout avec AppTest (~1 min)
+.venv/bin/python -m unittest discover -s tests -t .   # tests Python (NBA, rugby, moteur du radar, caches)
+.venv/bin/python tests/apptest_dashboard.py           # Dashboard de bout en bout avec AppTest
+.venv/bin/python tests/apptest_radar.py               # Radar de comparaison
+.venv/bin/python tests/apptest_navigation.py          # navigation entre les 3 pages
+.venv/bin/python tests/apptest_effectifs.py           # page Effectifs (~1 min)
 cd tests/js && npm install && npm test                 # JavaScript de la grille Effectifs (node + jsdom)
 ```
 
@@ -101,24 +128,36 @@ Le script rend 11 situations NBA (Dashboard, Radar, Effectifs) dans le commit de
 Dashboard.py                 # UI Streamlit, ne connaît que data_sources.SPORTS
 pages/
   1_Radar_de_comparaison.py
-  2_Effectifs.py              # grille des compositions + effectif réel
+  2_Effectifs.py              # grille des compositions + effectif réel (NBA)
 data_sources/
   base.py                     # schéma commun, cache parquet
+  radar_common.py             # moteur du radar commun aux sports (z-score, centile, padding)
   nba.py                      # logique spécifique NBA
   nba_logos.csv               # table saison -> logo d'époque
+  rugby/
+    schema.py                 # compétitions, saisons, colonnes, seuils et axes du radar
+    incrowd.py                # JSON InCrowd -> tables brutes, corrections de minutes et de scores
+    minutes.py                # minutes reconstruites depuis les remplacements et les cartons
+    positions.py              # poste principal, postes secondaires, poste mixte
+    aggregate.py              # une ligne par joueur et par saison (totaux, par 80, clubs)
+    stats.py                  # lecture des caches, noms affichés, métriques du Dashboard
+    radar.py                  # axes et scores du radar rugby
 data_cache/
-  raw/nba/                    # fichiers bruts
-  processed/nba/              # données normalisées, en cache par saison
+  raw/nba/, raw/rugby/        # fichiers bruts
+  processed/nba/, processed/rugby/  # données normalisées, en cache par saison
 static/logos/nba/             # logos d'époque, servis par Streamlit (.streamlit/config.toml)
 scripts/
   prefill_cache.py
   instantanes_nba.py          # comparaison des pages NBA avec un commit de référence
   update_nba_logos.py
+  rugby_download.py           # téléchargement des JSON InCrowd (hors ligne)
+  rugby_build.py              # construction des caches rugby
+  rugby_calibrate.py          # calibration des seuils du radar rugby
 tests/                        # tests Python et AppTest
   js/                         # tests JavaScript
 ```
 
-Ajouter un sport revient à créer `data_sources/<sport>.py` avec une fonction `get_player_stats()` et l'enregistrer dans `data_sources/__init__.py` — rien à changer dans `Dashboard.py`, le sélecteur de sport et les graphiques se construisent automatiquement à partir du registre.
+Ajouter un sport revient à créer `data_sources/<sport>.py` (ou un dossier, comme `data_sources/rugby/`) avec une fonction `get_player_stats()` et l'enregistrer dans `data_sources/__init__.py`, sans rien changer dans `Dashboard.py` : le sélecteur de sport et les graphiques se construisent automatiquement à partir du registre.
 
 ## Méthodologie
 
@@ -126,17 +165,27 @@ Détail des choix de métriques, des pistes testées et abandonnées, et des lim
 
 ## Limites connues
 
+NBA :
+
 - La jointure salaire/stats se fait sur le nom du joueur normalisé, de rares homonymes peuvent ne pas matcher (ligne alors exclue automatiquement du scatter).
 - Le dataset de salaires récent s'arrête à sa dernière saison couverte ; les saisons plus récentes affichent les stats mais pas le salaire tant que le dataset n'est pas mis à jour.
 - Aucune métrique défensive individuelle n'a été retenue : les stats hustle disponibles via `nba_api` se sont révélées peu discriminantes (testées contre les DPOY de plusieurs saisons, sans résultat concluant).
 
+Rugby :
+
+- Le match d'accès entre le Top 14 et la Pro D2 n'est pas dans les données.
+- La source écrit presque tous les noms sans accents ; seuls les noms vérifiés à la main sont corrigés.
+- Pas de stats de mêlée ni de rucks par joueur, pas d'âge, de taille ni de poids.
+
+Détail et autres limites : [METHODOLOGY.md](METHODOLOGY.md).
+
 ## Feuille de route
 
-Le prochain sport sera le rugby, dans une version centrée sur la performance uniquement, sans comparaison salariale.
+Prochaine étape : le Six Nations (source ESPN), avec la même page Dashboard et le même radar.
 
 ## Stack technique
 
-Python, Streamlit, pandas, Plotly, nba_api, datasets Kaggle.
+Python, Streamlit, pandas, Plotly, nba_api, datasets Kaggle, flux InCrowd (rugby).
 
 ---
 
