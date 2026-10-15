@@ -120,6 +120,14 @@ class NomsDeJoueursTest(unittest.TestCase):
             df = stats.get_player_stats(season, competition="prod2")
             self.assertEqual(df.loc[df["player_uid"] == "icw:137322", "player"].tolist(), ["Chris Hilsenbeck"])
 
+    def test_berguet(self):
+        """Un seul joueur sous "Charlesty Berguet" et "Martin Berguet" (règle 1), nom corrigé partout."""
+        for comp, season in (("top14", "2024-25"), ("prod2", "2022-23"), ("prod2", "2023-24"),
+                             ("prod2", "2025-26")):
+            df = stats.get_player_stats(season, competition=comp)
+            self.assertEqual(df.loc[df["player_uid"] == "icw:161580", "player"].tolist(),
+                             ["Charles-Henri Berguet"])
+
 
 class CatalogueTest(unittest.TestCase):
     def test_seuils_nc_de_la_calibration(self):

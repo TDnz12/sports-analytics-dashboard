@@ -53,7 +53,8 @@ TEAM_DISPLAY_NAMES = {
 # une seule graphie par identifiant, sur toutes les saisons et les deux compétitions. Règle 2 :
 # PLAYER_DISPLAY_NAMES, corrections manuelles appliquées en dernier (nom affiché seulement : le tri
 # ignore les accents). Comme TEAM_DISPLAY_NAMES : à la lecture, caches et identifiants inchangés.
-# Chaque entrée vérifiée contre une source externe (presse, Wikipedia, all.rugby) le 15 octobre 2026.
+# Chaque entrée vérifiée contre une source externe (presse, Wikipedia, all.rugby, RugbyPass) le 15
+# octobre 2026.
 PLAYER_DISPLAY_NAMES = {
     "icw:206243": "Léo Barré",
     "icw:237225": "Émilien Gailleton",
@@ -83,6 +84,7 @@ PLAYER_DISPLAY_NAMES = {
     "icw:161080": "Loïc Crédoz",
     "icw:244765": "Maël Moustin",
     "icw:158404": "Julien Hériteau",
+    "icw:161580": "Charles-Henri Berguet",  # "Charlesty" (surnom) et "Martin" dans la source
     "icw:137322": "Chris Hilsenbeck",  # faute de frappe de la source ("Hilsenback")
 }
 
