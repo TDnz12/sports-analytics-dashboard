@@ -15,6 +15,7 @@ Usage :
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -25,7 +26,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from data_sources.base import write_cache  # noqa: E402
 from data_sources.rugby import schema  # noqa: E402
 from data_sources.rugby.aggregate import aggregate_season  # noqa: E402
-from data_sources.rugby.incrowd import extract_season, score_gaps  # noqa: E402
+from data_sources.rugby.incrowd import (  # noqa: E402
+    APPEARANCE_STATS, extract_season, score_gaps, scoring_check,
+)
 from data_sources.rugby.minutes import (  # noqa: E402
     TEAM_TOLERANCE_MIN, reconstruct_minutes, team_minutes_check,
 )
@@ -158,6 +161,42 @@ def control_report(tables: dict[str, pd.DataFrame], processed: dict[str, pd.Data
         f"{(diff[valid] == 0).mean():.1%} exactes, {int((~valid).sum())} ligne(s) incohérente(s), "
         f"{int((diff[valid].abs() > 5).sum())} écart(s) de plus de 5 min")
 
+    # Minutes inconnues, lignes "a joué" sans minute, compteurs de score (décisions B.3 et B.0 de
+    # l'audit). Nom du joueur : celui de sa feuille de match.
+    names = lu.drop_duplicates(["match_uid", "player_uid"]).set_index(["match_uid", "player_uid"])["player_name"]
+
+    def who(r) -> str:
+        return f"{r.match_uid} {r.team_uid} {names.get((r.match_uid, r.player_uid), r.player_uid)}"
+
+    failed = pm[pm["minutes_method"] == "echec"]
+    add(f"Minutes inconnues (echec : absentes ou négatives dans la source, ou reconstruction "
+        f"incohérente) : {len(failed)} ligne(s)")
+    for r in failed.itertuples():
+        add(f"  {who(r)}")
+    no_min = pm[pm["appeared"] & ~(pm["minutes"] > 0)]
+    # Les 12 lignes relevées à l'audit avaient des plaquages ou des courses ; les autres ne
+    # prouvent l'entrée en jeu que par une autre stat (passe, coup de pied, pénalité concédée...).
+    in_audit = (no_min["tackles"].fillna(0) > 0) | (no_min["carries"].fillna(0) > 0)
+    add(f"A joué sans minute (0 ou inconnue) mais avec des stats : {len(no_min)} ligne(s) "
+        f"({int(in_audit.sum())} avec plaquages ou courses, relevées à l'audit ; "
+        f"{int((~in_audit).sum())} avec une autre stat seulement)")
+    for (r, audit) in zip(no_min.itertuples(), in_audit):
+        proof = ", ".join(f"{c} {getattr(r, c):.0f}" for c in APPEARANCE_STATS
+                          if pd.notna(getattr(r, c)) and getattr(r, c) > 0)
+        add(f"  {'audit   ' if audit else 'nouvelle'} {who(r)}, minutes {r.minutes}, {proof}")
+    fixed = pm[pm["score_source"] == "evenements_ligne"]
+    add(f"Compteurs de score corrigés depuis les événements (points de la source = événements) : "
+        f"{len(fixed)} ligne(s)")
+    for r in fixed.itertuples():
+        add(f"  {who(r)} : essais {r.tries:.0f}, transformations {r.conversions_made:.0f}, "
+            f"pénalités {r.penalty_goals_made:.0f}, drops {r.drop_goals_made:.0f}, points {r.points:.0f}")
+    disagree = scoring_check(tables)
+    disagree = disagree[disagree["verdict"] == "desaccord"]
+    add(f"Compteurs en désaccord avec les événements, source gardée : {len(disagree)} ligne(s)")
+    for r in disagree.itertuples():
+        add(f"  {who(r)} : compteurs {r.points_counters:.0f} pts, événements {r.points_events:.0f} pts, "
+            f"source {r.points:.0f} pts")
+
     # Joueurs et postes
     full = processed["all"]
     played = full[full["games_played"] > 0]
@@ -178,6 +217,15 @@ def control_report(tables: dict[str, pd.DataFrame], processed: dict[str, pd.Data
         f"dont {len(und_ok)} au-dessus du seuil du radar")
     for r in und_ok.sort_values("minutes_total", ascending=False).itertuples():
         add(f"  {r.player} ({r.team}) : {r.games_played} matchs, {r.minutes_total:.0f} min")
+    # Clubs (décision B.2) : club principal = le plus de minutes, comparé au club du dernier match.
+    multi = full[full["clubs_detail"].map(lambda d: len(json.loads(d)) > 1)]
+    last_club = (lu.merge(m[["match_uid", "date_utc"]], on="match_uid").sort_values("date_utc")
+                 .drop_duplicates("player_uid", keep="last").set_index("player_uid")["team_uid"])
+    moved = multi[multi["team_uid"] != multi["player_uid"].map(last_club)]
+    add(f"Joueurs à plusieurs clubs : {len(multi)} ; club principal (le plus de minutes) différent "
+        f"du club du dernier match : {len(moved)}")
+    for r in moved.itertuples():
+        add(f"  {r.player} : {r.team} ({', '.join(f'{n} {g}' for _, n, g in json.loads(r.clubs_detail))})")
     homonyms = full[full["player_label"] != full["player"]]
     add(f"Homonymes (libellé « Nom (Club) ») : {len(homonyms)}")
 

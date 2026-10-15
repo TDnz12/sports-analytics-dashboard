@@ -317,9 +317,11 @@ else:
 
 
 # Libellé d'un joueur dans la liste : son nom, et son poste quand le sport a un identifiant
-# distinct du nom (rugby : "Nom (Club) · Pilier (banc)").
+# distinct du nom (rugby : "Nom (Club) · Deuxième ligne, poste mixte (aussi : Troisième ligne aile
+# 38 %)", colonne position_list_label ; sinon position_label).
 if key_col != label_col and "position_label" in df.columns:
-    _position_labels = df.drop_duplicates(key_col).set_index(key_col)["position_label"]
+    _position_col = "position_list_label" if "position_list_label" in df.columns else "position_label"
+    _position_labels = df.drop_duplicates(key_col).set_index(key_col)[_position_col]
     option_labels = {k: f"{labels[k]} · {_position_labels[k]}" for k in player_options}
 else:
     option_labels = {}

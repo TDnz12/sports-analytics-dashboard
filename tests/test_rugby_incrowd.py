@@ -245,6 +245,65 @@ class RecomptageDuScoreTest(unittest.TestCase):
         self.assertEqual(pm.loc[f"icw:{self.scorer['id']}", "tries"], self.scorer["stats"]["tries"])
 
 
+class CorrectionsDeLigneTest(unittest.TestCase):
+    """Décisions B.3 et B.0 de l'audit : minute négative inconnue, "a joué" avec une stat de jeu,
+    compteurs de score pris dans les événements quand les points de la source leur donnent raison."""
+
+    def setUp(self):
+        self.payload = copy.deepcopy(load_fixture())
+        self.home = self.payload["data"]["homeTeam"]
+        self.scorer = next(p for p in self.home["players"] if p["stats"]["tries"])
+        self.other = next(p for p in self.home["players"]
+                          if not p["stats"]["tries"] and p["stats"].get("minutesPlayedTotal"))
+
+    def _pm(self):
+        tables = incrowd.extract_match(self.payload, "top14")
+        tables = incrowd.mark_appeared(incrowd.fix_scoring_counters(tables))
+        return tables["player_match"].set_index("player_uid")
+
+    def test_minute_negative_inconnue(self):
+        self.other["stats"]["minutesPlayedTotal"] = -10
+        row = self._pm().loc[f"icw:{self.other['id']}"]
+        self.assertTrue(pd.isna(row["minutes"]))
+        self.assertEqual(row["minutes_method"], "echec")
+        self.assertTrue(row["appeared"])                 # il a des stats de jeu
+
+    def test_a_joue_avec_une_stat_pas_avec_un_carton(self):
+        bench = [p for p in self.home["players"] if int(p["positionId"]) > 15][:2]
+        for p in bench:
+            p["stats"] = {k: 0 for k in p["stats"]} | {"minutesPlayedTotal": 0}
+        bench[0]["stats"]["passes"] = 1
+        bench[1]["stats"]["yellowCards"] = 1
+        pm = self._pm()
+        self.assertTrue(pm.loc[f"icw:{bench[0]['id']}", "appeared"])
+        self.assertFalse(pm.loc[f"icw:{bench[1]['id']}", "appeared"])
+
+    def test_compteur_faux_corrige_par_les_evenements(self):
+        original = self._pm()
+        self.scorer["stats"]["tries"] -= 1               # points de la source = événements
+        pm = self._pm()
+        uid = f"icw:{self.scorer['id']}"
+        self.assertEqual(pm.loc[uid, "tries"], original.loc[uid, "tries"])
+        self.assertEqual(pm.loc[uid, "points"], original.loc[uid, "points"])
+        self.assertEqual(pm.loc[uid, "score_source"], "evenements_ligne")
+        self.assertEqual((pm["score_source"] == "evenements_ligne").sum(), 1)
+
+    def test_desaccord_source_gardee(self):
+        # Essai passé à un autre joueur dans les compteurs ET les points : les événements, seuls
+        # contre deux, sont tenus pour faux.
+        self.scorer["stats"]["tries"] -= 1
+        self.scorer["stats"]["points"] -= 5
+        self.other["stats"]["tries"] = 1
+        self.other["stats"]["points"] = self.other["stats"].get("points", 0) + 5
+        tables = incrowd.extract_match(self.payload, "top14")
+        check = incrowd.scoring_check(tables).set_index("player_uid")
+        self.assertEqual(check.loc[f"icw:{self.scorer['id']}", "verdict"], "desaccord")
+        self.assertEqual(check.loc[f"icw:{self.other['id']}", "verdict"], "desaccord")
+        pm = self._pm()
+        self.assertTrue((pm["score_source"] == "source").all())
+        self.assertEqual(pm.loc[f"icw:{self.other['id']}", "tries"], 1)
+
+
 class ExtractSeasonTest(unittest.TestCase):
     def _write(self, path: Path, payload: dict) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

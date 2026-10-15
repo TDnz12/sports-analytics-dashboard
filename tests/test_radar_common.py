@@ -76,6 +76,15 @@ class TestScoreAxes(unittest.TestCase):
         for suffix in ("_z", "_score", "_percentile"):
             self.assertTrue(self.out[f"radar_adj{suffix}"].isna().all())
 
+    def test_centile_vide_quand_le_score_est_vide(self):
+        # Décision C2 de l'audit rugby : référence dégénérée (valeurs identiques) -> score ET
+        # centile vides, comme l'axe en mode Indice.
+        df = pd.DataFrame({"position_group": ["A"] * 3 + ["B"] * 3, "v": [5.0] * 3 + [1.0, 2.0, 3.0]})
+        out = rc.score_axes(df, [{"key": "a", "stat_col": "v"}], pd.Series(True, index=df.index))
+        self.assertTrue(out.loc[:2, "radar_a_score"].isna().all())
+        self.assertTrue(out.loc[:2, "radar_a_percentile"].isna().all())
+        np.testing.assert_allclose(out.loc[3:, "radar_a_percentile"].to_numpy(), [100 / 3, 200 / 3, 100])
+
     def test_score_borne(self):
         df = pd.DataFrame({"position_group": ["A"] * 20, "v": [0.0] * 19 + [1000.0]})
         out = rc.score_axes(df, [{"key": "a", "stat_col": "v"}], pd.Series(True, index=df.index))

@@ -279,6 +279,20 @@ assert "Essais : " in card and "% au pied : " in card and "Cartons : " in card
 assert "titularisation" in card and ">Pilier" in card
 ok("Pilier, Ailier, Arrière : 5 axes communs, axes retirés au tableau, hors radar, cartes")
 
+# R3 bis. Poste mixte (sous 60 % des titularisations au poste principal) et postes secondaires dans
+# la liste et la carte ; clubs sur la carte d'un joueur passé par deux clubs (décisions B.1 et B.2).
+labels = {o for o in ms.options}
+assert "Charles Ollivon · Troisième ligne centre, poste mixte (aussi : Deuxième ligne 38 %, " \
+       "Troisième ligne aile 12 %)" in labels
+assert "Paul Boudehent · Deuxième ligne (aussi : Troisième ligne aile 38 %)" in labels   # 62 % : pas mixte
+uid = {r["player"]: r["player_uid"] for _, r in df_r.iterrows()}
+ms.set_value([uid["Charles Ollivon"], uid["Jonny Gray"]]).run()
+assert not at.exception, at.exception
+ollivon, gray = [m.value for m in at.markdown if "border-left: 4px solid" in m.value]
+assert ">Troisième ligne centre, poste mixte (aussi : Deuxième ligne 38 %, Troisième ligne aile 12 %)<" in ollivon, ollivon
+assert ">Clubs : Bordeaux-Bègles (10), Perpignan (4)<" in gray and "Clubs" not in ollivon, gray
+ok("poste mixte et postes secondaires dans la liste et la carte (Ollivon), Boudehent à 62 % sans badge, clubs de Gray")
+
 # R4. NC : % plaquages sous 25 tentatives (hors arrières, qui n'ont pas l'axe)
 nc = df_r[df_r["radar_eligible"] & (df_r["tackle_attempts"].between(1, 24))
           & (df_r["position_group"] != "Arrière")].iloc[0]

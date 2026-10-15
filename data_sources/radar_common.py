@@ -92,5 +92,8 @@ def score_axes(result: pd.DataFrame, axes: list[dict], stat_mask: pd.Series) -> 
         z = _zscore_by_position(result, result, z_col, stat_mask)
         result[f"radar_{axis['key']}_z"] = z
         result[f"radar_{axis['key']}_score"] = (z.clip(-3, 3) + 3) / 6 * 100
-        result[f"radar_{axis['key']}_percentile"] = _percentile_by_position(result, result, z_col, stat_mask)
+        # Centile vide quand le score l'est (référence dégénérée : écart-type nul ou un seul joueur),
+        # comme l'axe affiché en mode Indice (décision C2 de l'audit rugby).
+        result[f"radar_{axis['key']}_percentile"] = _percentile_by_position(
+            result, result, z_col, stat_mask).where(z.notna())
     return result.drop(columns=temp_cols)

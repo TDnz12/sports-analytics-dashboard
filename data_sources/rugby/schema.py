@@ -162,11 +162,16 @@ def processed_path(competition: str, season: str, period: str = "all",
 
 # Versions de schéma (même mécanisme que nba.PROCESSED_SCHEMA_VERSION : base.read_cache traite
 # un cache d'une autre version comme absent). Chaque montée porte un commentaire "vN : raison".
-RUGBY_RAW_TABLES_SCHEMA_VERSION = 2      # les 5 tables de RAW_TABLES, produites ensemble
+RUGBY_RAW_TABLES_SCHEMA_VERSION = 3      # les 5 tables de RAW_TABLES, produites ensemble
 # Raw v2 : first_name et last_name dans lineups (tri du tableau du Dashboard par nom de famille).
+# Raw v3 : minute négative = inconnue ("echec") ; appeared = minutes > 0 ou une stat de jeu ;
+# compteurs de score pris dans les événements quand points de la source = événements
+# (score_source "evenements_ligne").
 RUGBY_PROFILES_SCHEMA_VERSION = 1
-RUGBY_PROCESSED_SCHEMA_VERSION = 3      # v2 : low_sample_size au seuil club calibré (5 matchs, 520 min)
+RUGBY_PROCESSED_SCHEMA_VERSION = 4      # v2 : low_sample_size au seuil club calibré (5 matchs, 520 min)
 # v3 : first_name et last_name (tri du tableau du Dashboard par nom de famille puis prénom).
+# v4 : par 80 stat par stat sur les matchs à minutes > 0 ; club principal = le plus de minutes ;
+# clubs_detail ; position_share (badge "poste mixte").
 
 # --- Seuils et radar (calibration : scripts/rugby_calibrate.py, rugby_notes/calibration_v1.md) ---
 # Population de référence du radar et badge "échantillon court" : (matchs joués, minutes).
@@ -275,8 +280,10 @@ PLAYER_MATCH_STAT_COLUMNS = [
     "conversions_made", "conversions_missed", "penalty_goals_made", "penalty_goals_missed",
     "goal_attempts", "drop_goals_made", "points",
 ]
-# score_source : "source" (stats du joueur telles que fournies) ou "evenements" (essais, buts et
-# points recomptés depuis les événements, quand la source a perdu le score de l'équipe-match).
+# score_source : "source" (stats du joueur telles que fournies), "evenements" (essais, buts et
+# points recomptés depuis les événements, quand la source a perdu le score de l'équipe-match) ou
+# "evenements_ligne" (compteurs d'une seule ligne pris dans les événements, quand les points de la
+# source leur donnent raison contre les compteurs ; voir incrowd.fix_scoring_counters).
 PLAYER_MATCH_COLUMNS = [
     "match_uid", "team_uid", "player_uid", "minutes", "minutes_method", "appeared", "score_source",
 ] + PLAYER_MATCH_STAT_COLUMNS

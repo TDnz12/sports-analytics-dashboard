@@ -1,9 +1,11 @@
 """Agrégation par saison (data_sources/rugby/aggregate.py) sur une mini-saison construite à la main :
-2 équipes, 3 matchs (2 de phase régulière, 1 phase finale).
+2 équipes, 3 matchs (2 de phase régulière, 1 phase finale). Club principal par les minutes, clubs_detail,
+par 80 sur les seuls matchs à minutes > 0 où la stat est connue (décisions B.2, B.3 et C4 de l'audit).
 
 Lancer depuis la racine du projet : .venv/bin/python -m unittest discover -s tests -t .
 """
 
+import json
 import math
 import unittest
 
@@ -38,6 +40,12 @@ def mini_season():
           "penalty_goals_missed": 2, "drop_goals_made": 1}),
         ("icw:101", B, "icw:30", "Petit", 12, 80, {}),
         ("icw:103", A, "icw:30", "Petit", 12, 60, {}),                      # transféré chez Alpha
+        ("icw:101", B, "icw:40", "Roux", 13, 40, {}),                       # 40 min de chaque côté :
+        ("icw:103", A, "icw:40", "Roux", 13, 40, {}),                       # le plus récent l'emporte
+        ("icw:101", A, "icw:50", "Blanc", 6, 80, {"tackles": 8}),
+        ("icw:102", A, "icw:50", "Blanc", 20, 0, {"tackles": 3}),           # 0 min, mais des stats
+        ("icw:101", A, "icw:60", "Leroy", 7, 80, {"tackles": 8, "carries": 4}),
+        ("icw:102", A, "icw:60", "Leroy", 7, 40, {"tackles": np.nan, "carries": 2}),   # stat inconnue
     ]
     lineups, pm = [], []
     for match, team, player, name, jersey, minutes, stats in rows:
@@ -100,13 +108,30 @@ class AggregateTest(unittest.TestCase):
         self.assertEqual((d["games_played"], d["minutes_total"], d["tackles"]), (2, 120, 12))
         self.assertEqual(self.regular.loc["icw:30", "team"], "Beta")   # avant son transfert
 
-    def test_equipe_du_dernier_match_et_disponibilite(self):
-        p = self.all.loc["icw:30"]
-        self.assertEqual((p["team"], p["team_uid"]), ("Alpha", A))
+    def test_club_principal_le_plus_de_minutes_et_disponibilite(self):
+        p = self.all.loc["icw:30"]                       # 80 min avec Beta, puis 60 avec Alpha
+        self.assertEqual((p["team"], p["team_uid"]), ("Beta", B))
+        self.assertEqual(json.loads(p["clubs_detail"]), [[B, "Beta", 1], [A, "Alpha", 1]])
         self.assertEqual(p["team_matches_span"], 2)      # 1 match avec Beta + 1 avec Alpha
         b = self.all.loc["icw:12"]                       # matchs 101 et 103 sur 3 d'Alpha
         self.assertEqual(b["team_matches_span"], 3)
         self.assertAlmostEqual(b["availability"], 2 / 3)
+
+    def test_club_egalite_le_plus_recent(self):
+        r = self.all.loc["icw:40"]                       # minutes et matchs à égalité
+        self.assertEqual(r["team_uid"], A)
+        self.assertEqual(json.loads(self.all.loc["icw:10", "clubs_detail"]), [[A, "Alpha", 3]])
+        self.assertEqual(json.loads(self.all.loc["icw:11", "clubs_detail"]), [])   # jamais entré
+
+    def test_par_80_sans_les_lignes_a_0_minute(self):
+        b = self.all.loc["icw:50"]
+        self.assertEqual(b["tackles"], 11)               # total : toutes les lignes
+        self.assertAlmostEqual(b["tackles_per80"], 8)    # 8 / 80 x 80, sans la ligne à 0 min
+
+    def test_par_80_stat_par_stat(self):
+        r = self.all.loc["icw:60"]                       # plaquages inconnus au match 102
+        self.assertAlmostEqual(r["tackles_per80"], 8)               # 8 / 80 x 80
+        self.assertAlmostEqual(r["carries_per80"], 6 / 120 * 80)    # 2 matchs, 120 min
 
     def test_joueur_sur_la_feuille_sans_jouer(self):
         m = self.all.loc["icw:11"]

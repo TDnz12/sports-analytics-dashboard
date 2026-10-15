@@ -162,7 +162,9 @@ assert legend(at) == [("Avants", FAMILY_COLORS["Avants"]), ("Arrières", FAMILY_
 ok("Rugby : légende réduite aux familles, couleurs fixes")
 
 table = at.dataframe[0].value
-assert list(table.columns[:6]) == ["Joueur", "Équipe", "Poste", "Matchs", "Titularisations", "Minutes"]
+assert list(table.columns[:7]) == ["Joueur", "Équipe", "Clubs", "Poste", "Matchs", "Titularisations", "Minutes"]
+# Clubs : seulement pour un joueur passé par plusieurs clubs (3 en Top 14 2025-26, Gray compris)
+assert table["Clubs"].notna().sum() >= 3 and table["Clubs"].dropna().str.contains(r"\(\d+\), ").all()
 assert {"Plaquages par 80 min", "Mètres par 80 min", "Essais", "Cartons (J / R)", "Échantillon"} <= set(table.columns)
 assert len(table) == n_shown + n_hidden and (table["Échantillon"] == "court").sum() == n_hidden
 # Ordre purement alphabétique (nom de famille, prénom), échantillons courts mêlés aux autres
@@ -174,6 +176,23 @@ assert shown["Minutes"].str.fullmatch(r"\d+").all() and shown["Essais"].str.full
 assert index_hidden(at)
 assert "Saison" not in table.columns
 ok("Rugby : tableau détaillé complet, ordre alphabétique sans regrouper les échantillons courts, virgule décimale, sans index")
+
+# Filtre équipe : un joueur passé par deux clubs apparaît dans chacun (Gray : Bordeaux-Bègles,
+# club principal, et Perpignan), avec la mention de ses clubs dans l'infobulle (décision B.2).
+team_box = widget(at, "multiselect", "Filtrer par équipe (optionnel)")
+for club in ("Bordeaux-Bègles", "Perpignan"):
+    team_box.set_value([club]).run()
+    assert not at.exception, at.exception
+    table = at.dataframe[0].value
+    gray = table[table["Joueur"] == "Jonny Gray"]
+    assert len(gray) == 1 and gray["Équipe"].iloc[0] == "Bordeaux-Bègles", (club, gray)
+    assert gray["Clubs"].iloc[0] == "Bordeaux-Bègles (10), Perpignan (4)"
+    hover = [h for t in spec(at)["data"] if t.get("mode") == "markers"
+             for name, h in zip(t["hovertext"], [c[0] for c in t["customdata"]]) if name == "Jonny Gray"]
+    assert hover and "Clubs : Bordeaux-Bègles (10), Perpignan (4)" in hover[0], hover
+    assert set(table["Équipe"]) - {club} <= set(table.loc[table["Clubs"].notna(), "Équipe"])
+team_box.set_value([]).run()
+ok("Rugby : filtre Bordeaux-Bègles puis Perpignan, Jonny Gray présent dans les deux, clubs dans l'infobulle et le tableau")
 
 box.check().run()
 assert not at.exception and points(at) == n_shown + n_hidden

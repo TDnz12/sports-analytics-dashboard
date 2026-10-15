@@ -243,9 +243,13 @@ def radar_card_lines(row: pd.Series) -> list[str]:
     position = row["position_group"]
     if row.get("position_source") == SOURCE_BENCH:
         position += ", poste déduit du maillot de banc"
+    if row.get("mixed_position"):
+        position += ", poste mixte"
     if isinstance(row.get("secondary_positions"), str) and row["secondary_positions"]:
         position += f" (aussi : {row['secondary_positions']})"
     lines = [position]
+    if isinstance(row.get("clubs"), str) and row["clubs"]:
+        lines.append(f"Clubs : {row['clubs']}")
     games = int(row["games_played"])
     play = [_plural(int(row["starts"]), "titularisation")]
     if pd.notna(row.get("minutes_per_game")):

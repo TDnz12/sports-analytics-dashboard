@@ -4,8 +4,12 @@ par joueur, même contrat que la NBA (COMMON_COLUMNS) plus les colonnes propres 
 
 - Totaux : sommes sur les matchs de la période ("all" : saison complète, phases finales incluses ;
   "regular" : phase régulière seule). Une stat absente de la source reste NaN (somme min_count=1).
-- Par 80 minutes : total / minutes x 80, numérateur et dénominateur sur les MÊMES matchs (ceux où
-  les minutes sont connues).
+- Par 80 minutes : total / minutes x 80, stat par stat, numérateur et dénominateur sur les MÊMES
+  matchs : ceux où les minutes sont connues et > 0 et où la stat est connue (décisions B.3 et C4
+  de l'audit). Les totaux gardent toutes les lignes (0 minute avec des stats comprises).
+- Club (team, team_uid) : celui où il a joué le plus de minutes ; égalité : plus de matchs joués,
+  puis le plus récent. clubs_detail : JSON [[team_uid, nom source, matchs joués], ...] des clubs
+  où il a joué au moins un match, dans l'ordre chronologique (affiché par stats.py).
 - Pourcentages toujours depuis les sommes, jamais en moyenne de pourcentages par match. Drops
   exclus du % au pied (numérateur et tentatives). Les pourcentages ajustés (padding, NC) sont
   calculés au moment du radar (lot 6), avec les seuils fixés par la calibration.
@@ -16,6 +20,8 @@ par joueur, même contrat que la NBA (COMMON_COLUMNS) plus les colonnes propres 
 """
 
 from __future__ import annotations
+
+import json
 
 import numpy as np
 import pandas as pd
@@ -66,6 +72,22 @@ def _team_matches_span(squad: pd.DataFrame, matches: pd.DataFrame) -> pd.Series:
     return spans.groupby("player_uid")["n"].sum()
 
 
+def _clubs(squad: pd.DataFrame, names: dict) -> tuple[pd.Series, pd.Series]:
+    """(club principal, clubs_detail) par joueur, voir la docstring du module."""
+    by_club = (squad.groupby(["player_uid", "team_uid"])
+               .agg(minutes=("minutes", "sum"), games=("appeared", "sum"),
+                    first=("date_utc", "min"), last=("date_utc", "max")).reset_index())
+    main = (by_club.sort_values(["player_uid", "minutes", "games", "last"],
+                                ascending=[True, False, False, False])
+            .drop_duplicates("player_uid").set_index("player_uid")["team_uid"])
+    played = by_club[by_club["games"] > 0].sort_values(["player_uid", "first"])
+    detail = played.groupby("player_uid").apply(
+        lambda g: json.dumps([[t, names.get(t), int(n)] for t, n in zip(g["team_uid"], g["games"])],
+                             ensure_ascii=False),
+        include_groups=False)
+    return main, detail
+
+
 def aggregate_season(tables: dict[str, pd.DataFrame], competition: str,
                      period: str = "all") -> pd.DataFrame:
     """Une ligne par joueur présent sur au moins une feuille de match de la période."""
@@ -93,8 +115,10 @@ def aggregate_season(tables: dict[str, pd.DataFrame], competition: str,
     out["player"] = last["player_name"]
     out["first_name"] = last["first_name"]
     out["last_name"] = last["last_name"]
-    out["team_uid"] = last["team_uid"]
-    out["team"] = out["team_uid"].map(_team_names(all_matches))
+    team_names = _team_names(all_matches)
+    out["team_uid"], out["clubs_detail"] = _clubs(squad, team_names)
+    out["clubs_detail"] = out["clubs_detail"].fillna("[]")
+    out["team"] = out["team_uid"].map(team_names)
     out["team_matches_span"] = _team_matches_span(squad, matches)
     out["availability"] = _div(out["matchday_squads"], out["team_matches_span"])
 
@@ -107,9 +131,11 @@ def aggregate_season(tables: dict[str, pd.DataFrame], competition: str,
     extra_cols = ["goals_made", "tackle_attempts"]
     for col in schema.PLAYER_MATCH_STAT_COLUMNS + extra_cols:
         out[col] = g[col].sum(min_count=1)
+    played = squad[squad["minutes"] > 0]
     for col in PER80_STATS:
-        num = gk[col].sum(min_count=1).reindex(out.index)
-        out[f"{col}_per80"] = _div(num, out["minutes_total"]) * 80
+        rows = played[played[col].notna()].groupby("player_uid")
+        out[f"{col}_per80"] = _div(rows[col].sum().reindex(out.index),
+                                   rows["minutes"].sum().reindex(out.index)) * 80
     for col, (num, den) in RATIOS.items():
         out[col] = _div(out[num], out[den])
 
@@ -127,8 +153,8 @@ def aggregate_season(tables: dict[str, pd.DataFrame], competition: str,
 
     head = ["sport", "season", "player", "team", "competition", "player_uid", "player_label",
             "first_name", "last_name",
-            "team_uid", "position_group", "position_family", "position_source",
-            "secondary_positions", "position_detail", "games_played", "starts",
+            "team_uid", "clubs_detail", "position_group", "position_family", "position_source",
+            "secondary_positions", "position_detail", "position_share", "games_played", "starts",
             "matchday_squads", "team_matches_span", "availability", "minutes_total",
             "minutes_per_game", "start_rate", "age", "height_cm", "weight_kg"]
     rest = [c for c in out.columns if c not in head and c != "low_sample_size"]

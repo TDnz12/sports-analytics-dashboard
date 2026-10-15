@@ -588,7 +588,10 @@ if "minutes_per_game" in plot_df.columns:
 if "games_played" in plot_df.columns:
     plot_df = plot_df[plot_df["games_played"].fillna(0) >= min_games]
 if team_filter:
-    plot_df = plot_df[plot_df["team"].isin(team_filter)]
+    if "club_names" in plot_df.columns:  # rugby : un joueur apparaît dans chacun de ses clubs
+        plot_df = plot_df[plot_df["club_names"].map(lambda c: not set(c).isdisjoint(team_filter))]
+    else:
+        plot_df = plot_df[plot_df["team"].isin(team_filter)]
 if position_filter:
     plot_df = plot_df[plot_df[sport.position_filter_col].isin(position_filter)]
 if not include_estimated_salary and "salary_is_estimated" in plot_df.columns:
@@ -767,9 +770,14 @@ def _build_hover_text(row) -> str:
     lines = []
     if pd.notna(row.get("team")):
         lines.append(f"Équipe : {row['team']}")
-    # Poste en clair (rugby : "(banc)" pour un remplaçant jamais titulaire).
+    # Rugby : joueur passé par plusieurs clubs dans la saison ("Bordeaux-Bègles (10), Perpignan (4)").
+    if isinstance(row.get("clubs"), str) and row["clubs"]:
+        lines.append(f"Clubs : {row['clubs']}")
+    # Poste en clair (rugby : "(banc)" pour un remplaçant jamais titulaire, "(poste mixte)" sous
+    # 60 % des titularisations au poste principal).
     if pd.notna(row.get("position_label")):
-        lines.append(f"Poste : {row['position_label']}")
+        mixed = " (poste mixte)" if row.get("mixed_position") else ""
+        lines.append(f"Poste : {row['position_label']}{mixed}")
     # Utile seulement en mode "Toutes les saisons" (sinon déjà indiqué dans le titre) : un même
     # joueur y apparaît comme plusieurs points distincts, un par saison jouée.
     if is_all_seasons and pd.notna(row.get("season")):

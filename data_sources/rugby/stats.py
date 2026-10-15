@@ -9,16 +9,23 @@ colonnes d'affichage calculées à la lecture (pas stockées dans le cache) :
   poste est déduit du maillot 16, 17 ou 18 (plan, P5 ; explication dans SOURCE_CAPTION) ;
 - position_family : "Indéterminé" à la place d'une valeur vide, pour la couleur du graph ;
 - cards : "jaunes / rouges" de la saison ;
-- team : nom d'affichage avec ses accents (TEAM_DISPLAY_NAMES), player_label recalculé avec lui.
+- team : nom d'affichage avec ses accents (TEAM_DISPLAY_NAMES), player_label recalculé avec lui ;
+- clubs : "Bordeaux-Bègles (10), Perpignan (4)" (matchs joués, ordre chronologique) pour un joueur
+  passé par plusieurs clubs dans la saison, sinon vide ; club_names : tuple des clubs où il a joué
+  (filtre équipe du Dashboard : il apparaît dans chacun) ;
+- mixed_position : poste principal sous 60 % des titularisations (positions.MIXED_POSITION_SHARE) ;
+  position_list_label : poste, "poste mixte" et postes secondaires (liste du radar).
 """
 
 from __future__ import annotations
+
+import json
 
 import pandas as pd
 
 from ..base import Metric, read_cache
 from . import schema
-from .positions import SOURCE_BENCH, UNDETERMINED
+from .positions import MIXED_POSITION_SHARE, SOURCE_BENCH, SOURCE_STARTER, UNDETERMINED
 
 
 # Noms d'équipes à l'affichage : InCrowd les donne sans accents ("Bordeaux-Begles"). Indexés par
@@ -55,6 +62,17 @@ def get_player_stats(season: str, force_refresh: bool = False, period: str = "al
     df["position_family"] = df["position_family"].fillna(UNDETERMINED)
     df["cards"] = (df["yellow_cards"].fillna(0).astype(int).astype(str) + " / "
                    + df["red_cards"].fillna(0).astype(int).astype(str))
+    clubs = df["clubs_detail"].map(json.loads)
+    named = clubs.map(lambda d: [(TEAM_DISPLAY_NAMES.get(uid, name), n) for uid, name, n in d])
+    df["club_names"] = [tuple(name for name, _ in d) or (team,) for d, team in zip(named, df["team"])]
+    df["clubs"] = named.map(lambda d: ", ".join(f"{name} ({n})" for name, n in d) if len(d) > 1 else None)
+    df["mixed_position"] = ((df["position_source"] == SOURCE_STARTER)
+                            & (df["position_share"] < MIXED_POSITION_SHARE))
+    secondary = df["secondary_positions"].where(df["secondary_positions"].notna(), None)
+    df["position_list_label"] = [
+        label + (", poste mixte" if mixed else "") + (f" (aussi : {sec})" if isinstance(sec, str) and sec else "")
+        for label, mixed, sec in zip(df["position_label"], df["mixed_position"], secondary)
+    ]
     return df
 
 
@@ -116,7 +134,7 @@ METRICS: dict[str, Metric] = {m.key: m for m in _METRIC_LIST}
 
 # Colonnes du tableau détaillé du Dashboard, avant et après les colonnes des métriques choisies.
 DETAIL_LEAD_COLUMNS = {
-    "player_label": "Joueur", "team": "Équipe", "position_label": "Poste",
+    "player_label": "Joueur", "team": "Équipe", "clubs": "Clubs", "position_label": "Poste",
     "games_played": "Matchs", "starts": "Titularisations", "minutes_total": "Minutes",
 }
 DETAIL_TAIL_COLUMNS = {"tries": "Essais", "cards": "Cartons (J / R)"}

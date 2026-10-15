@@ -5,7 +5,8 @@ complète : un joueur a le même poste en "Saison complète" et en "Phase régul
 - Poste principal : groupe le plus porté comme titulaire (maillots 1 à 15). Égalité : groupe avec
   le plus de minutes, puis le plus récent. position_source = "titulaire".
 - Postes secondaires : autres groupes portés comme titulaire, avec leur part des titularisations
-  ("Centre 30 %"). Le détail par numéro va dans position_detail ("Pilier : 1 (70 %), 3 (30 %)").
+  ("Centre 30 %"). position_share : part du poste principal (badge "poste mixte" sous
+  MIXED_POSITION_SHARE, à l'affichage). Le détail par numéro va dans position_detail ("Pilier : 1 (70 %), 3 (30 %)").
 - Joueur jamais titulaire : maillot de banc le plus porté (égalité : plus de minutes, puis le plus
   récent). 16 = talonneur, 17 et 18 = piliers (règle de remplacement de la première ligne) :
   position_source = "banc". 19 à 23 : pas de repli (bancs en 5/3 ou 6/2), "Indéterminé", hors
@@ -36,7 +37,10 @@ BENCH_FALLBACK = {16: HOOKER, 17: PROP, 18: PROP}
 
 SOURCE_STARTER, SOURCE_BENCH = "titulaire", "banc"
 POSITION_COLUMNS = ["player_uid", "position_group", "position_family", "position_source",
-                    "secondary_positions", "position_detail"]
+                    "secondary_positions", "position_detail", "position_share"]
+# Poste principal sous 60 % des titularisations : "poste mixte" (décision B.1 de l'audit ; 20 à 36
+# joueurs par saison parmi les titulaires d'au moins 5 matchs).
+MIXED_POSITION_SHARE = 0.6
 
 
 def _pct(x: float) -> str:
@@ -78,6 +82,7 @@ def assign_positions(lineups: pd.DataFrame, player_match: pd.DataFrame,
         for uid, g in by_group.groupby("player_uid"):
             g = g.sort_values(["share", "minutes"], ascending=False)
             others = g[g["group"] != main[uid]]
+            out.at[uid, "position_share"] = float(g.loc[g["group"] == main[uid], "share"].iloc[0])
             out.at[uid, "secondary_positions"] = (
                 ", ".join(f"{r.group} {_pct(r.share)}" for r in others.itertuples()) or None)
             details = []
@@ -104,5 +109,7 @@ def assign_positions(lineups: pd.DataFrame, player_match: pd.DataFrame,
 
     out["position_group"] = out["position_group"].fillna(UNDETERMINED)
     out["position_family"] = out["position_group"].map(GROUP_FAMILY)
+    share = out.pop("position_share").astype(float)
     out = out.replace({np.nan: None})
+    out["position_share"] = share
     return out.reset_index()[POSITION_COLUMNS]

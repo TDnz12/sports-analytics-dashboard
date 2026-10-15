@@ -168,6 +168,10 @@ def extract_match(payload: dict, competition: str) -> dict[str, pd.DataFrame]:
             })
             s = p.get("stats") or {}
             minutes = _num(s.get("minutesPlayedTotal"))
+            # Minute négative (une seule sur les 9 saisons : Delannoy, icw:276697, -10) :
+            # impossible, donc inconnue ("echec"), listée dans le rapport du build.
+            if minutes < 0:
+                minutes = np.nan
             row = {
                 "match_uid": match_uid, "team_uid": team_uid, "player_uid": player_uid,
                 "minutes": minutes,
@@ -345,6 +349,70 @@ def rebuild_scoring_from_events(tables: dict[str, pd.DataFrame]) -> tuple[dict[s
     return {**tables, "player_match": pm[schema.PLAYER_MATCH_COLUMNS]}, todo
 
 
+# Stats qui prouvent qu'un joueur est entré en jeu. Cartons exclus : un remplaçant peut en recevoir
+# sans jouer.
+APPEARANCE_STATS = [c for c in schema.PLAYER_MATCH_STAT_COLUMNS if c not in ("yellow_cards", "red_cards")]
+
+
+def mark_appeared(tables: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    """appeared = minutes > 0 ou au moins une stat de jeu non nulle (APPEARANCE_STATS) : 22 lignes
+    à 0 minute avec des stats sur les 9 saisons, plus Delannoy (minute négative, devenue
+    inconnue). Ces lignes comptent dans les matchs joués et les totaux, pas dans les par 80
+    (minutes inconnues ou nulles, voir aggregate.py)."""
+    pm = tables["player_match"].copy()
+    pm["appeared"] = (pm["minutes"] > 0) | (pm[APPEARANCE_STATS].fillna(0) > 0).any(axis=1)
+    return {**tables, "player_match": pm}
+
+
+def scoring_check(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Par ligne joueur-match en score "source" : compteurs (essais, transformations, pénalités,
+    drops) contre événements de score. Colonnes : match_uid, team_uid, player_uid, <compteur>_ev
+    (compte des événements), points, points_counters, points_events, verdict : "ok" (compteurs =
+    événements), "corrigible" (points de la source = événements ≠ compteurs : 2 sources sur 3
+    contre les compteurs, qui sont faux) ou "desaccord" (sinon : compteurs gardés)."""
+    key = ["match_uid", "team_uid", "player_uid"]
+    ev = tables["events"]
+    pm = tables["player_match"]
+    pm = pm[pm["score_source"] == "source"]
+    counts = (ev[ev["type"].isin(list(SCORE_POINTS))].groupby(key + ["type"]).size()
+              .unstack("type", fill_value=0).reindex(columns=list(SCORE_POINTS), fill_value=0)
+              .rename(columns={t: f"{c}_ev" for t, c in SCORE_COLUMNS.items()}))
+    out = pm[key + list(SCORE_COLUMNS.values()) + ["points"]].merge(
+        counts.reset_index(), on=key, how="left")
+    ev_cols = [f"{c}_ev" for c in SCORE_COLUMNS.values()]
+    out[ev_cols] = out[ev_cols].fillna(0)
+    out["points_counters"] = sum(out[c] * SCORE_POINTS[t] for t, c in SCORE_COLUMNS.items())
+    out["points_events"] = sum(out[f"{c}_ev"] * SCORE_POINTS[t] for t, c in SCORE_COLUMNS.items())
+    differ = np.zeros(len(out), dtype=bool)
+    for c in SCORE_COLUMNS.values():
+        differ |= (out[c] != out[f"{c}_ev"]).to_numpy()
+    fixable = (out["points"] == out["points_events"]) & (out["points_events"] != out["points_counters"])
+    out["verdict"] = np.where(~differ, "ok", np.where(fixable, "corrigible", "desaccord"))
+    return out
+
+
+def fix_scoring_counters(tables: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    """Lignes "corrigible" de scoring_check (19 sur les 9 saisons, ex. Chinarro, icw:288599 :
+    2 essais dans les événements, 0 au compteur) : compteurs pris dans les événements,
+    goal_attempts recalculé, score_source = "evenements_ligne". Les points ne changent pas (déjà
+    égaux aux événements). Les "desaccord" (14, événements faux) gardent la source."""
+    key = ["match_uid", "team_uid", "player_uid"]
+    check = scoring_check(tables)
+    todo = check[check["verdict"] == "corrigible"]
+    if todo.empty:
+        return tables
+    ev_cols = [f"{c}_ev" for c in SCORE_COLUMNS.values()]
+    pm = tables["player_match"].merge(todo[key + ev_cols], on=key, how="left", indicator=True)
+    fix = pm.pop("_merge") == "both"
+    for c in SCORE_COLUMNS.values():
+        pm.loc[fix, c] = pm.loc[fix, f"{c}_ev"]
+    pm.loc[fix, "goal_attempts"] = (pm.loc[fix, "conversions_made"] + pm.loc[fix, "conversions_missed"]
+                                    + pm.loc[fix, "penalty_goals_made"]
+                                    + pm.loc[fix, "penalty_goals_missed"])
+    pm.loc[fix, "score_source"] = "evenements_ligne"
+    return {**tables, "player_match": pm[schema.PLAYER_MATCH_COLUMNS]}
+
+
 def extract_season(competition: str, season_id: int,
                    json_root: Path | None = None) -> dict[str, pd.DataFrame]:
     """Toute une saison : les matchs "result" de list.json.gz, chacun lu dans son fichier de
@@ -382,4 +450,5 @@ def extract_season(competition: str, season_id: int,
                           .sort_values("_o", kind="stable").drop(columns="_o")
                           .reset_index(drop=True))
     tables = use_rebuilt_minutes_where_better(tables)
-    return rebuild_scoring_from_events(tables)[0]
+    tables = rebuild_scoring_from_events(tables)[0]
+    return mark_appeared(fix_scoring_counters(tables))
