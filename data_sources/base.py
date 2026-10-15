@@ -82,6 +82,15 @@ def normalize_name(name: str) -> str:
     return n
 
 
+def sort_key(name: str) -> tuple:
+    """Clé de tri alphabétique des listes affichées (équipes, joueurs) : sans accents ni casse,
+    « Béziers » avant « Brive », « Šarić » avec les S, « Aaron » avant « AJ ». Ponctuation et
+    suffixes gardés, contrairement à normalize_name (réservée à la recherche et à
+    l'identification) : « A.J. Lawson » reste avant « Aaron Gordon ». Le nom d'origine départage
+    deux clés égales, pour un ordre stable."""
+    return unidecode(name).casefold(), name
+
+
 SCHEMA_VERSION_COL = "_schema_version"
 
 

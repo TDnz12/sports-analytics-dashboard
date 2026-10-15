@@ -28,14 +28,19 @@ from . import schema
 from .positions import MIXED_POSITION_SHARE, SOURCE_BENCH, SOURCE_STARTER, UNDETERMINED
 
 
-# Noms d'équipes à l'affichage : InCrowd les donne sans accents ("Bordeaux-Begles"). Indexés par
-# identifiant d'équipe (stable), appliqués à la lecture seulement : caches et identifiants
-# inchangés. Seules les équipes Top 14 et Pro D2 (2021-22 à 2025-26) dont le nom perd un accent.
+# Noms d'équipes à l'affichage : InCrowd les donne sans accents ("Bordeaux-Begles") et sous des
+# formes mélangées ("Castres Olympique" à côté de "Pau"). Indexés par identifiant d'équipe
+# (stable), appliqués à la lecture seulement : caches et identifiants inchangés. Équipes Top 14 et
+# Pro D2 (2021-22 à 2025-26) dont le nom perd un accent ou n'est pas le nom d'usage court.
 TEAM_DISPLAY_NAMES = {
     "icw:5195": "Béziers",
+    "icw:1610": "Biarritz",
     "icw:5979": "Bordeaux-Bègles",
+    "icw:6294": "Castres",
+    "icw:3094": "Clermont",
+    "icw:2806": "Lyon",
     "icw:3921": "Soyaux-Angoulême",
-    "icw:4003": "Stade Français Paris",
+    "icw:4003": "Stade Français",
 }
 
 
@@ -107,11 +112,11 @@ _METRIC_LIST = [
     _per80("defenders_beaten", "Défenseurs battus", "Attaque"),
     Metric("clean_breaks", "Franchissements (total)", ".0f", "Attaque"),
     _per80("clean_breaks", "Franchissements", "Attaque", unreliable=True),
-    _per80("offloads", "Offloads", "Attaque"),
+    _per80("offloads", "Passes après contact", "Attaque"),
     _per80("passes", "Passes", "Attaque"),
     _per80("kicks_from_hand", "Coups de pied", "Jeu au pied"),
     _per80("kick_metres", "Mètres au pied", "Jeu au pied"),
-    _pct("goal_kick_pct", "% au pied (transformations et pénalités)", "Jeu au pied",
+    _pct("goal_kick_pct", "% au pied", "Jeu au pied",
          "goals_made", "goal_attempts", "goal_kick_pct_adj"),
     _per80("lineouts_won_jumper", "Touches gagnées", "Touche"),
     _per80("lineout_steals", "Touches volées", "Touche"),
@@ -152,7 +157,8 @@ SOURCE_CAPTION = (
     "Par 80 min : total divisé par les minutes jouées, multiplié par 80. Les stats par 80 min "
     "des joueurs qui entrent souvent en cours de match peuvent être plus élevées : jambes "
     "fraîches face à une défense fatiguée, extrapolées sur 80 minutes.  ·  Pourcentages "
-    "calculés sur les totaux de la saison, drops exclus du % au pied ; « NC » (non classé) sous "
+    "calculés sur les totaux de la saison ; % au pied : transformations et pénalités, drops "
+    "exclus ; « NC » (non classé) sous "
     f"{_NC['tackle_pct_adj']} plaquages tentés, {_NC['gain_line_pct_adj']} courses ou "
     f"{_NC['goal_kick_pct_adj']} tentatives au but.  ·  Échantillon court : {LOW_SAMPLE_LABEL} "
     "sur la saison.  ·  « Peu fiable sur une saison » : stat dont la fiabilité reste sous 0,4 "

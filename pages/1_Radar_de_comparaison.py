@@ -30,7 +30,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from data_sources import SPORTS
-from data_sources.base import ALL_SEASONS, incomplete_data_warning, shared_season
+from data_sources.base import ALL_SEASONS, incomplete_data_warning, shared_season, sort_key
 
 st.set_page_config(page_title="Radar de comparaison · Sports Analytics", layout="wide")
 
@@ -310,10 +310,8 @@ eligible_mask = df["games_played"].fillna(0) > 0
 if "radar_eligible" in df.columns:
     eligible_mask &= df["radar_eligible"]
 eligible = df[eligible_mask]
-if key_col == label_col:
-    player_options = sorted(eligible[key_col].dropna().unique().tolist())
-else:
-    player_options = sorted(eligible[key_col].dropna().unique().tolist(), key=lambda k: labels[k])
+# Tri alphabétique sans accents ni casse (data_sources.base.sort_key), comme le Dashboard.
+player_options = sorted(eligible[key_col].dropna().unique().tolist(), key=lambda k: sort_key(labels[k]))
 
 
 # Libellé d'un joueur dans la liste : son nom, et son poste quand le sport a un identifiant
@@ -375,7 +373,10 @@ if preselected_player and preselected_player not in player_options:
             f"{period_txt} : sélectionne une autre saison ou un autre joueur."
         )
 
-st.title(" · ".join(["Radar de comparaison"] + ([competition.label] if competition else []) + [season]))
+# Compétition (rugby) ou, à défaut, sport (NBA) : « Radar de comparaison · NBA · 2024-25 ».
+st.title(" · ".join(["Radar de comparaison"]
+                    + ([competition.label] if competition else [sport.short_label or sport.label])
+                    + [season]))
 
 # Toggle Indice / Centile (inspiré de Data'Scout) : les deux lisent les colonnes déjà calculées
 # par compute_radar_scores (radar_<key>_score / radar_<key>_percentile), même référence (poste +
@@ -383,11 +384,11 @@ st.title(" · ".join(["Radar de comparaison"] + ([competition.label] if competit
 # référence change (écart-type mis à l'échelle vs rang direct).
 display_mode = st.radio(
     "Mode d'affichage", options=["Indice", "Centile"], index=0, horizontal=True,
-    help=(
-        "Indice : z-score par poste clippé à ±3 écarts-types, mis à l'échelle 0-100 (50 = "
+    help=sport.radar_mode_help or (
+        "Indice : z-score par poste borné à ±3 écarts-types, mis à l'échelle 0-100 (50 = "
         "moyenne du poste). Centile : rang percentile réel dans la même population "
-        "(poste + saison/période + seuil de matchs joués) -- ex. 90 = ce joueur fait mieux que "
-        "90% des joueurs de référence à son poste sur cet axe."
+        "(poste + saison/période + seuil de matchs joués) ; par exemple, 90 = ce joueur fait "
+        "mieux que 90% des joueurs de référence à son poste sur cet axe."
     ),
 )
 score_suffix = "_score" if display_mode == "Indice" else "_percentile"
@@ -689,7 +690,7 @@ st.caption(
         "joueur est mesurée par rapport aux autres joueurs de référence au même poste, pas à "
         "l'ensemble de la ligue."
     )) + (
-        " Affiché ici mis à l'échelle 0-100 pour la lecture (clip à ±3 écarts-types) : 50 = dans "
+        " Affiché ici mis à l'échelle 0-100 pour la lecture (borné à ±3 écarts-types) : 50 = dans "
         "la moyenne des joueurs à son poste sur cet axe."
         if display_mode == "Indice" else
         " Affiché ici en rang percentile direct (rang / effectif) dans la même population de "

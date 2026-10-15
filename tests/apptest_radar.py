@@ -7,6 +7,7 @@ Lancer depuis la racine du projet :  .venv/bin/python tests/apptest_radar.py
 """
 
 import json
+import re
 import pathlib
 import sys
 
@@ -51,7 +52,10 @@ assert not at.exception, at.exception
 ms = at.multiselect(key="radar_players")
 assert at.selectbox(key="radar_season").value == "2024-25" and len(ms.value) == 1
 assert len(traces(at)) == 1 and len(traces(at, "legende")) == 1 and len(cards(at)) == 1
-ok("ouverture : un joueur, une carte, un tracé")
+assert at.title[0].value == "Radar de comparaison · NBA · 2024-25", at.title[0].value
+assert "borné à ±3 écarts-types" in at.radio[0].help and "clipp" not in at.radio[0].help
+assert any("(borné à ±3 écarts-types)" in c.value for c in at.caption)
+ok("ouverture : un joueur, une carte, un tracé, titre « · NBA · », « borné » dans l'aide et la légende")
 
 # 2. Quatre joueurs : couleurs distinctes, remplissage transparent, valeurs au survol seulement
 ms.set_value(FOUR).run()
@@ -265,8 +269,8 @@ assert any(c.startswith("Joueurs de référence : Pilier") for c in caps)
 assert rugby_radar.FEW_AXES_NOTE not in caps
 table = recap(at)
 assert list(table.index) == [r["player_label"] for r in trio]
-pen = "Pénalités concédées par 80 (ajusté, peu fiable)"
-for col in ("% plaquages", "Grattages (ajusté)", "Mètres au pied (ajusté)", "Essais", "% au pied",
+pen = "Pénalités concédées par 80 min (ajusté, peu fiable)"
+for col in ("% plaquages réussis", "Grattages (ajusté)", "Mètres au pied (ajusté)", "Essais (total)", "% au pied",
             "Cartons (J / R)", pen):
     assert col in table.columns, col
 assert all(" (brut " in v for v in table[pen]), table[pen]
@@ -300,8 +304,8 @@ ms.set_value([nc["player_uid"]]).run()
 assert not at.exception, at.exception
 (circle,) = traces(at, "sans_tentative")
 reasons = dict(zip(circle["theta"], circle["customdata"]))
-assert reasons["% plaquages"] == f"volume trop faible : {nc['tackle_attempts']:.0f} plaquages tentés, minimum 25", reasons
-cell = recap(at).loc[nc["player_label"], "% plaquages"]
+assert reasons["% plaquages réussis"] == f"volume trop faible : {nc['tackle_attempts']:.0f} plaquages tentés, minimum 25", reasons
+cell = recap(at).loc[nc["player_label"], "% plaquages réussis"]
 assert cell.endswith("  ·  NC  ") and f"({nc['tackles']:.0f}/{nc['tackle_attempts']:.0f})" in cell, cell
 assert "Échantillon court" in next(m.value for m in at.markdown if "border-left" in m.value)
 ok(f"NC : {nc['player_label']} ({nc['tackle_attempts']:.0f} plaquages tentés), cercle creux, « NC » au tableau, échantillon court")
@@ -338,7 +342,7 @@ ok("présélection d'un Indéterminé : message « pas de poste déterminé »")
 # R8. Retour à la NBA depuis le rugby : saison et joueurs revalidés
 select(at, "Sport").set_value("nba").run()
 assert not at.exception, at.exception
-assert select(at, "Saison").value == "2024-25" and at.title[0].value == "Radar de comparaison · 2024-25"
+assert select(at, "Saison").value == "2024-25" and at.title[0].value == "Radar de comparaison · NBA · 2024-25"
 assert len(at.multiselect(key="radar_players").value) == 1 and len(traces(at)) == 1
 ok("rugby puis NBA : saison 2024-25 et joueur NBA, sans erreur")
 
@@ -355,7 +359,16 @@ assert not at.exception
 assert not [t for t in all_texts(at) if "—" in t], [t for t in all_texts(at) if "—" in t]
 at.radio[0].set_value("Centile").run()
 assert not at.exception and not [t for t in all_texts(at) if "—" in t]
-ok("rugby : aucun tiret cadratin (modes Indice et Centile)")
+at.radio[0].set_value("Indice").run()
+assert "au moins 5 matchs et 520 minutes" in at.radio[0].help and "90 % des joueurs" in at.radio[0].help
+for mode in ("Indice", "Centile"):
+    at.radio[0].set_value(mode).run()
+    texts = all_texts(at) + [at.radio[0].help]
+    bad = [t for t in texts if re.search(r"garbage|clipp|-- |Offloads", t)]
+    assert not at.exception and not bad, bad
+labels = [o.split(" · ")[0] for o in at.multiselect(key="radar_players").options]
+assert labels == sorted(labels, key=base.sort_key)
+ok("rugby : aucun tiret cadratin ni texte NBA ou anglais (modes Indice et Centile), aide du seuil rugby, liste triée sans accents")
 
 # R11. Données partielles : bandeau visible quand get_player_stats signale un manque (attrs).
 # SPORTS["nba"] remplacé le temps du contrôle, restauré même en cas d'échec.

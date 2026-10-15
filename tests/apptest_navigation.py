@@ -115,7 +115,7 @@ for strict in (False, True):
     s.go(RADAR)
     assert select(s.at, "Compétition").value == "top14"
     select(s.at, "Sport", "nba")
-    assert s.title() == "Radar de comparaison · 2024-25", s.title()
+    assert s.title() == "Radar de comparaison · NBA · 2024-25", s.title()
     s.go(DASHBOARD)
     assert s.title() == "Basketball (NBA) · 2024-25", s.title()
     select(s.at, "Sport", "rugby")
@@ -142,7 +142,7 @@ for strict in (False, True):
     s.go(DASHBOARD)
     assert s.title() == "Basketball (NBA) · 2019-20", s.title()
     s.go(RADAR)
-    assert s.title() == "Radar de comparaison · 2019-20", s.title()
+    assert s.title() == "Radar de comparaison · NBA · 2019-20", s.title()
     select(s.at, "Saison", "2021-22")
     s.go(EFFECTIFS)
     assert s.season() == "2021-22", s.season()
@@ -173,7 +173,7 @@ for strict in (False, True):
     all_title = s.title()
     assert all_title.startswith("Basketball (NBA) · Toutes les saisons"), all_title
     s.go(RADAR)
-    assert s.title() == "Radar de comparaison · 2024-25", s.title()
+    assert s.title() == "Radar de comparaison · NBA · 2024-25", s.title()
     s.go(EFFECTIFS)
     assert s.season() == "2024-25", s.season()
     s.go(DASHBOARD)
@@ -186,7 +186,7 @@ for strict in (False, True):
 
 # 5. Radar ouvert en premier, sans passer par le Dashboard : NBA ; Rugby choisi -> Dashboard Rugby
 at = AppTest.from_file(str(ROOT / RADAR), default_timeout=300).run()
-assert select(at, "Sport").value == "nba" and at.title[0].value == "Radar de comparaison · 2024-25"
+assert select(at, "Sport").value == "nba" and at.title[0].value == "Radar de comparaison · NBA · 2024-25"
 select(at, "Sport", "rugby")
 select(at, "Compétition", "prod2")
 kept = {k: v for k, v in at.session_state.to_dict().items() if k not in WIDGET_KEYS[RADAR]}

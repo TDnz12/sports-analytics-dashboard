@@ -92,6 +92,14 @@ RADAR_REFERENCE_CAPTION = (
     "l'ensemble du championnat. Axes par 80 minutes, sauf les pourcentages."
 )
 
+# Aide du choix "Mode d'affichage" de la page radar.
+RADAR_MODE_HELP = (
+    "Indice : z-score par poste borné à ±3 écarts-types, mis à l'échelle 0-100 (50 = moyenne du "
+    "poste). Centile : rang percentile réel dans la même population (poste, même compétition, "
+    f"saison et période, au moins {_MIN_GAMES} matchs et {_MIN_MINUTES} minutes) ; par exemple, "
+    "90 = ce joueur fait mieux que 90 % des joueurs de référence à son poste sur cet axe."
+)
+
 RADAR_CAVEATS: list[str] = [
     "Axes retenus : seulement ceux dont la fiabilité sur une saison de "
     f"{_MIN_MINUTES} minutes atteint 0,4 pour le poste. Pénalités concédées, ballons perdus, "
@@ -258,7 +266,7 @@ def radar_card_lines(row: pd.Series) -> list[str]:
         play.append(f"disponibilité {_pct(row['availability'])}")
     lines.append(" · ".join(play))
     lines.append(_key_figures(row))
-    if not row.get("radar_reference", True):
+    if not row["radar_reference"]:
         lines.append(f"Échantillon court : {_plural(games, 'match')}, "
                      f"{row['minutes_total']:.0f} min (hors population de référence)")
     return lines
@@ -293,19 +301,19 @@ _ADJUSTED_HELP = (" Valeur ajustée : rapprochée de la moyenne du poste d'autan
 
 
 def _extra_label(axis: dict) -> str:
-    """En-tête d'un axe retiré dans le tableau : "Grattages (ajusté)", "% plaquages"."""
+    """En-tête d'un axe retiré dans le tableau : "Grattages (ajusté)", "% plaquages réussis"."""
     return axis["label"] if "made_col" in axis else f"{axis['label']} {ADJUSTED}"
 
 
 RADAR_EXTRA_HELP = {
     **{_extra_label(a): a["help"] + " Hors radar ici : pas fiable pour tous les postes comparés."
        + ("" if "made_col" in a else _ADJUSTED_HELP) for a in RADAR_AXES},
-    "Essais": "Essais marqués sur la saison (total).",
-    "Franchissements": "Franchissements de la ligne de défense sur la saison (total).",
-    f"Pénalités concédées par 80 {UNRELIABLE}": (
+    "Essais (total)": "Essais marqués sur la saison (total).",
+    "Franchissements (total)": "Franchissements de la ligne de défense sur la saison (total).",
+    f"Pénalités concédées par 80 min {UNRELIABLE}": (
         "Pénalités concédées par 80 minutes. Peu fiable sur une saison : écarts entre joueurs "
         "surtout dus au hasard." + _ADJUSTED_HELP),
-    f"Ballons perdus par 80 {UNRELIABLE}": (
+    f"Ballons perdus par 80 min {UNRELIABLE}": (
         "Ballons perdus par 80 minutes. Peu fiable sur une saison : écarts entre joueurs surtout "
         "dus au hasard." + _ADJUSTED_HELP),
     "% au pied": (
@@ -328,10 +336,10 @@ def radar_extra_columns(row: pd.Series, positions) -> dict[str, str]:
         _, removed = _common_and_removed(groups)
         for key in dict.fromkeys(k for keys in removed.values() for k in keys):
             out[_extra_label(AXES_BY_KEY[key])] = _hors_radar(AXES_BY_KEY[key], row)
-    for col, label in (("tries", "Essais"), ("clean_breaks", "Franchissements")):
+    for col, label in (("tries", "Essais (total)"), ("clean_breaks", "Franchissements (total)")):
         out[label] = "n.d." if pd.isna(row.get(col)) else f"{row[col]:.0f}"
-    for col, label in (("penalties_conceded_per80", "Pénalités concédées par 80"),
-                       ("turnovers_conceded_per80", "Ballons perdus par 80")):
+    for col, label in (("penalties_conceded_per80", "Pénalités concédées par 80 min"),
+                       ("turnovers_conceded_per80", "Ballons perdus par 80 min")):
         out[f"{label} {UNRELIABLE}"] = _adjusted_per80(row, col)
     attempts = row.get("goal_attempts")
     if pd.isna(attempts) or attempts == 0:

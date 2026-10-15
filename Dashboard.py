@@ -16,7 +16,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from data_sources import SPORTS
-from data_sources.base import ALL_SEASONS, incomplete_data_warning, normalize_name, shared_season
+from data_sources.base import ALL_SEASONS, incomplete_data_warning, normalize_name, shared_season, sort_key
 
 st.set_page_config(page_title="Sports Analytics Dashboard", layout="wide")
 
@@ -462,7 +462,8 @@ size_key = st.sidebar.selectbox(
 )
 
 st.sidebar.markdown("---")
-player_options = ["Aucun"] + sorted(df[label_col].dropna().unique().tolist())
+# Tri alphabétique sans accents ni casse (data_sources.base.sort_key).
+player_options = ["Aucun"] + sorted(df[label_col].dropna().unique().tolist(), key=sort_key)
 searched_player = st.sidebar.selectbox(
     "Rechercher un joueur",
     options=player_options,
@@ -515,7 +516,7 @@ if sport.show_low_sample_default is not None:
     )
 
 with st.sidebar.expander("Filtres avancés"):
-    teams = sorted(df["team"].dropna().unique().tolist())
+    teams = sorted(df["team"].dropna().unique().tolist(), key=sort_key)
     team_filter = st.multiselect("Filtrer par équipe (optionnel)", options=teams)
 
     position_filter = []
@@ -531,9 +532,9 @@ with st.sidebar.expander("Filtres avancés"):
         "min_minutes", sport.minutes_slider_default if sport.minutes_slider_default is not None else 8.0
     )
     min_minutes = st.slider(
-        "Minutes par match minimum (filtrer le bruit \"garbage time\")",
+        sport.minutes_slider_label or "Minutes par match minimum (filtrer le bruit \"garbage time\")",
         min_value=0.0, max_value=sport.minutes_slider_max or 40.0,
-        step=1.0, key="min_minutes",
+        step=1.0, key="min_minutes", format="%.0f" if sport.french_format else None,
     )
     # Seuil interne mentionné dans le help ci-dessous : 15 matchs en saison régulière
     # (MIN_GAMES_FOR_FIT), mais 4 en playoffs (MIN_GAMES_FOR_FIT_PLAYOFFS, voir son commentaire dans
@@ -583,8 +584,6 @@ with st.sidebar.expander("Filtres avancés"):
 # Filtrage
 # --------------------------------------------------------------------------
 plot_df = df.copy()
-if "minutes_per_game" in plot_df.columns:
-    plot_df = plot_df[plot_df["minutes_per_game"].fillna(0) >= min_minutes]
 if "games_played" in plot_df.columns:
     plot_df = plot_df[plot_df["games_played"].fillna(0) >= min_games]
 if team_filter:
@@ -594,6 +593,13 @@ if team_filter:
         plot_df = plot_df[plot_df["team"].isin(team_filter)]
 if position_filter:
     plot_df = plot_df[plot_df[sport.position_filter_col].isin(position_filter)]
+# Minimum de minutes appliqué en dernier, pour compter les joueurs qu'il retire seul (avec X et Y
+# renseignés) : le message de graph vide ne conseille de le baisser que dans ce cas.
+n_minutes_removed = 0
+if "minutes_per_game" in plot_df.columns:
+    _minutes_ok = plot_df["minutes_per_game"].fillna(0) >= min_minutes
+    n_minutes_removed = int((~_minutes_ok & plot_df[[x_key, y_key]].notna().all(axis=1)).sum())
+    plot_df = plot_df[_minutes_ok]
 if not include_estimated_salary and "salary_is_estimated" in plot_df.columns:
     estimated_mask = plot_df["salary_is_estimated"].fillna(False)
     salary_cols = [c for c in ("salary", "salary_musd", "salary_pct_cap") if c in plot_df.columns]
@@ -612,6 +618,17 @@ def nc_mask(frame: pd.DataFrame, key: str) -> pd.Series:
 # Tableau détaillé (sport.detail_lead_columns renseigné, rugby) : tous les joueurs des filtres,
 # échantillons courts et "NC" compris, sans les seules valeurs X / Y réellement absentes.
 table_base_df = plot_df.dropna(subset=[x_key, y_key])
+# Joueurs des filtres sans valeur en X ou en Y (rugby : % au pied d'un non-buteur, aucune
+# tentative) : absents du graph et du tableau, comptés pour la mention du tableau et le message
+# de graph vide.
+n_missing_xy = len(plot_df) - len(table_base_df)
+_missing_labels = " ou ".join(f"« {metrics[k].label} »" for k in dict.fromkeys((x_key, y_key))
+                              if plot_df[k].isna().any())
+
+
+def _players(n: int) -> str:
+    return f"{n} joueur{'s' if n > 1 else ''}"
+
 
 # Échantillons courts masqués du graph (case décochée), comptés pour la mention sous le graph.
 n_low_sample_hidden = 0
@@ -624,6 +641,10 @@ if not show_low_sample and "low_sample_size" in plot_df.columns:
 # la mention sous le graph.
 _nc_xy = (nc_mask(plot_df, x_key) | nc_mask(plot_df, y_key)) & plot_df[[x_key, y_key]].notna().all(axis=1)
 n_nc_hidden = int(_nc_xy.sum())
+_nc_txt = ", ".join(
+    f"{metrics[k].label} sous {metrics[k].min_attempts} tentatives"
+    for k in dict.fromkeys((x_key, y_key)) if metrics[k].min_attempts is not None
+)
 plot_df = plot_df[~_nc_xy]
 plot_df = plot_df.dropna(subset=[x_key, y_key])
 
@@ -633,7 +654,11 @@ x_meta, y_meta = metrics[x_key], metrics[y_key]
 # --------------------------------------------------------------------------
 # Contenu principal
 # --------------------------------------------------------------------------
-st.title(" · ".join([sport.label] + ([competition.label] if competition else []) + [season]))
+# "Toutes les saisons" n'a pas de sélecteur de période : celle utilisée (rugby : saison complète)
+# est dite dans le titre. NBA (sans sport.stats_periods) : titre inchangé.
+_title_period = [next(iter(STATS_PERIOD_OPTIONS))] if is_all_seasons and sport.stats_periods else []
+st.title(" · ".join([sport.label] + ([competition.label] if competition else []) + [season]
+                    + _title_period))
 
 # Texte de méthodologie/sources — calculé ici mais affiché plus bas dans un expander replié,
 # pour que le graph suive le titre sans texte interposé.
@@ -714,8 +739,23 @@ playoff_stats_caveat = (
     (PLAYOFF_PACE_CAVEAT + PLAYOFF_LOW_SAMPLE_THRESHOLD_CAVEAT) if stats_period == "playoffs" else None
 )
 
+# Graph vide : message selon la cause réelle (valeurs absentes, NC, échantillons courts masqués,
+# minimum de minutes), sinon les filtres.
 if plot_df.empty:
-    st.warning("Aucun joueur ne correspond aux filtres actuels (essaie de baisser le minimum de minutes).")
+    _reasons = []
+    if n_missing_xy:
+        _reasons.append(f"{_players(n_missing_xy)} sans valeur pour {_missing_labels} "
+                        "(aucune tentative ou donnée inconnue)")
+    if n_nc_hidden:
+        _reasons.append(f"{_players(n_nc_hidden)} NC ({_nc_txt})")
+    if n_low_sample_hidden:
+        _reasons.append(f"{_players(n_low_sample_hidden)} à échantillon court, masqués (case "
+                        "« Afficher les échantillons courts »)")
+    if n_minutes_removed:
+        _reasons.append(f"{_players(n_minutes_removed)} sous le minimum de minutes par match "
+                        "(essaie de le baisser)")
+    st.warning("Aucun joueur à afficher : " + " ; ".join(_reasons) + "." if _reasons
+               else "Aucun joueur ne correspond aux filtres actuels.")
     st.stop()
 
 # Badge visuel (pas d'exclusion) pour les échantillons de saison trop courts — voir
@@ -753,7 +793,9 @@ def format_metric(row, key: str) -> str | None:
     if m.made_col is None:
         if sport.french_format and m.fmt.endswith("%"):
             return f"{value * 100:.0f} %"
-        return _format_value(value, m.fmt)
+        text = _format_value(value, m.fmt)
+        # Virgule décimale (rugby), comme le tableau détaillé et le radar : "11,4".
+        return text.replace(".", ",") if sport.french_format else text
     made, attempts = row.get(m.made_col), row.get(m.attempts_col)
     text = f"{value * 100:.0f} % ({made:.0f}/{attempts:.0f})"
     if m.min_attempts is not None and attempts < m.min_attempts:
@@ -927,6 +969,8 @@ if pct_scaled:
     fig.update_yaxes(ticksuffix=" %" if y_key in pct_scaled else None)
     if color_key in pct_scaled:
         fig.update_layout(coloraxis_colorbar_ticksuffix=" %")
+if sport.french_format:  # graduations en virgule décimale (rugby) ; NBA : rien n'est passé
+    fig.update_layout(separators=", ")
 fig.update_layout(
     xaxis_title=x_meta.label,
     yaxis_title=y_meta.label,
@@ -1054,10 +1098,6 @@ if n_low_sample_hidden:
         "dans le tableau détaillé."
     )
 if n_nc_hidden:
-    _nc_txt = ", ".join(
-        f"{metrics[k].label} sous {metrics[k].min_attempts} tentatives"
-        for k in dict.fromkeys((x_key, y_key)) if metrics[k].min_attempts is not None
-    )
     _graph_notes.append(
         f"{n_nc_hidden} joueur{'s' if n_nc_hidden > 1 else ''} NC (non classé{'s' if n_nc_hidden > 1 else ''} : "
         f"{_nc_txt}) non affiché{'s' if n_nc_hidden > 1 else ''}."
@@ -1137,6 +1177,10 @@ def _detail_table():
 
 with st.expander("Voir les données détaillées"):
     if sport.detail_lead_columns:
+        if n_missing_xy:
+            st.caption(f"{_players(n_missing_xy)} sans valeur pour {_missing_labels} (aucune "
+                       f"tentative ou donnée inconnue) : absent{'s' if n_missing_xy > 1 else ''} "
+                       "du graph et du tableau.")
         st.dataframe(_detail_table(), width="stretch", hide_index=True)
     else:
         display_cols = ["player", "team"] + sorted(set([x_key, y_key] + ([color_key] if color_key in metrics else [])))
@@ -1155,12 +1199,11 @@ with st.expander("Voir les données détaillées"):
 # sélecteurs (stat de classement, saison régulière/playoffs) sont donc volontairement
 # indépendants de ceux du scatter plot, avec leurs propres widgets.
 # --------------------------------------------------------------------------
-st.markdown("---")
-st.subheader("Classement des équipes")
-
-if sport.get_team_ranking is None or not sport.team_ranking_metrics:
-    st.info("Classement des équipes pas encore disponible pour ce sport.")
-else:
+# Sport sans classement d'équipes (rugby, en attendant l'Elo du plan « Après la V1 ») : section
+# masquée plutôt qu'un titre suivi d'un message.
+if sport.get_team_ranking is not None and sport.team_ranking_metrics:
+    st.markdown("---")
+    st.subheader("Classement des équipes")
     ranking_metrics = sport.team_ranking_metrics
     ranking_metric_keys = list(ranking_metrics.keys())
 

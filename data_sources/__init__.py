@@ -38,6 +38,9 @@ class SportConfig:
     label: str                   # libellé affiché dans l'UI, ex "Basketball (NBA)"
     available: bool              # False -> affiché grisé / "bientôt disponible"
     get_player_stats: Optional[Callable[..., pd.DataFrame]] = None
+    # Libellé court du sport dans le titre du radar quand il n'a pas de compétition (NBA :
+    # « NBA ») ; None = label.
+    short_label: Optional[str] = None
     seasons: Optional[list] = None
     metrics: Optional[dict] = None
     # Champion (récompense collective, pas un lauréat individuel) par saison, {season: team} --
@@ -107,6 +110,7 @@ class SportConfig:
     # Curseurs des filtres avancés ; None = 40 min par match (défaut 8) et 82 matchs.
     minutes_slider_max: Optional[float] = None
     minutes_slider_default: Optional[float] = None
+    minutes_slider_label: Optional[str] = None      # None = libellé NBA historique
     games_slider_max: Optional[int] = None
     # Seuil "échantillon court" en clair (ex. "moins de 5 matchs ou 520 minutes") ; None = texte NBA.
     low_sample_label: Optional[str] = None
@@ -153,12 +157,15 @@ class SportConfig:
     radar_extra_help: Optional[dict] = None
     # Début de la légende sous le radar (référence du z-score) ; None = texte NBA.
     radar_reference_caption: Optional[str] = None
+    # Aide du choix "Mode d'affichage" (Indice / Centile) ; None = texte NBA.
+    radar_mode_help: Optional[str] = None
 
 
 # --- Sport actif ---------------------------------------------------------
 NBA = SportConfig(
     key="nba",
     label="Basketball (NBA)",
+    short_label="NBA",
     available=True,
     get_player_stats=nba.get_player_stats,
     seasons=nba.SEASONS,
@@ -206,6 +213,7 @@ RUGBY = SportConfig(
     loading_label="Chargement des données rugby...",
     minutes_slider_max=80.0,
     minutes_slider_default=0.0,
+    minutes_slider_label="Minutes par match minimum",
     # Pro D2 : 30 journées et 3 matchs de phases finales au plus.
     games_slider_max=34,
     low_sample_label=rugby.LOW_SAMPLE_LABEL,
@@ -236,6 +244,7 @@ RUGBY = SportConfig(
     radar_extra_columns=rugby.radar_extra_columns,
     radar_extra_help=rugby.RADAR_EXTRA_HELP,
     radar_reference_caption=rugby.RADAR_REFERENCE_CAPTION,
+    radar_mode_help=rugby.RADAR_MODE_HELP,
 )
 
 # --- Sports à venir (aucune implémentation, juste affichés "bientôt") ----

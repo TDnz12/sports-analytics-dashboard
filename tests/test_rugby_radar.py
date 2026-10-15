@@ -32,8 +32,8 @@ class TestAxesFor(unittest.TestCase):
 
     def test_pilier_ailier_intersection(self):
         axes, notes = radar.radar_axes_for([PROP, WING])
-        self.assertEqual(_labels(axes), ["Plaquages", "% plaquages", "Mètres", "% gain de ligne",
-                                         "Courses", "Défenseurs battus", "Offloads"])
+        self.assertEqual(_labels(axes), ["Plaquages", "% plaquages réussis", "Mètres", "% gain de ligne",
+                                         "Courses", "Défenseurs battus", "Passes après contact"])
         self.assertTrue(any(n.startswith("Postes différents") for n in notes))
         removed = next(n for n in notes if n.startswith("Axes retirés"))
         self.assertIn("Grattages, Passes (Pilier)", removed)
@@ -49,7 +49,7 @@ class TestAxesFor(unittest.TestCase):
 
     def test_arriere_sans_pourcentage_plaquages(self):
         axes, _ = radar.radar_axes_for([PROP, FULLBACK])
-        self.assertNotIn("% plaquages", _labels(axes))
+        self.assertNotIn("% plaquages réussis", _labels(axes))
 
     def test_indetermine_ignore(self):
         self.assertEqual(radar.radar_axes_for([UNDETERMINED]), ([], []))
@@ -260,18 +260,18 @@ class TestCardAndTable(unittest.TestCase):
         self.assertEqual(list(out)[:3], ["Grattages (ajusté)", "Passes (ajusté)", "Mètres au pied (ajusté)"])
         self.assertEqual(out["Grattages (ajusté)"], "0,6 (brut 0,8)")
         self.assertEqual(out["Passes (ajusté)"], "2,0")  # sans valeur ajustée : brute seule
-        self.assertEqual(out["Essais"], "3")
-        self.assertEqual(out["Pénalités concédées par 80 (ajusté, peu fiable)"], "1,0 (brut 1,2)")
+        self.assertEqual(out["Essais (total)"], "3")
+        self.assertEqual(out["Pénalités concédées par 80 min (ajusté, peu fiable)"], "1,0 (brut 1,2)")
         self.assertEqual(out["% au pied"], "aucune tentative")
         self.assertEqual(out["Cartons (J / R)"], "2 / 0")
         self.assertTrue(set(out) <= set(radar.RADAR_EXTRA_HELP))
 
     def test_pourcentage_plaquages_arriere(self):
         out = radar.radar_extra_columns(_row(position_group=FULLBACK), [FULLBACK, CENTRE])
-        self.assertEqual(out["% plaquages"], "90 % (90/100)  ·  ajusté 88 %")
+        self.assertEqual(out["% plaquages réussis"], "90 % (90/100)  ·  ajusté 88 %")
         nc = radar.radar_extra_columns(_row(tackle_pct_adj=np.nan, tackles=18.0,
                                             tackle_attempts=20.0), [FULLBACK, CENTRE])
-        self.assertEqual(nc["% plaquages"], "90 % (18/20)  ·  NC")
+        self.assertEqual(nc["% plaquages réussis"], "90 % (18/20)  ·  NC")
 
     def test_pied(self):
         out = radar.radar_extra_columns(_row(goal_attempts=67.0, goals_made=52.0,

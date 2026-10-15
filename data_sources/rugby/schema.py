@@ -221,7 +221,7 @@ PER80_SHRINK_M = {
 RADAR_MIN_RELIABILITY = 0.4
 RADAR_AXES_CLUB = {
     "tackles": ("Plaquages", "tackles_per80", None, None),
-    "tackle_pct": ("% plaquages", "tackle_pct", "tackle_pct_adj", "tackle_attempts"),
+    "tackle_pct": ("% plaquages réussis", "tackle_pct", "tackle_pct_adj", "tackle_attempts"),
     "metres": ("Mètres", "metres_per80", None, None),
     "gain_line_pct": ("% gain de ligne", "gain_line_pct", "gain_line_pct_adj", "carries"),
     "carries": ("Courses", "carries_per80", None, None),
@@ -229,7 +229,7 @@ RADAR_AXES_CLUB = {
     "defenders_beaten": ("Défenseurs battus", "defenders_beaten_per80", None, None),
     "passes": ("Passes", "passes_per80", None, None),
     "kick_metres": ("Mètres au pied", "kick_metres_per80", None, None),
-    "offloads": ("Offloads", "offloads_per80", None, None),
+    "offloads": ("Passes après contact", "offloads_per80", None, None),
     "lineouts_won_jumper": ("Touches gagnées", "lineouts_won_jumper_per80", None, None),
     "lineout_steals": ("Touches volées", "lineout_steals_per80", None, None),
 }

@@ -18,6 +18,7 @@ import data_sources.nba as nba, data_sources.base as base
 writes = []
 nba.write_cache = base.write_cache = lambda df, path, **k: writes.append(str(path))
 from streamlit.testing.v1 import AppTest
+from data_sources.rugby import get_player_stats as rugby_stats
 
 PAGE = str(ROOT / "Dashboard.py")
 ok = lambda name: print("ok -", name)
@@ -99,6 +100,22 @@ def no_em_dash(at):
     assert not [t for t in texts if "—" in str(t)], [t for t in texts if "—" in str(t)]
 
 
+def no_nba_text(at):
+    """Rugby : aucun texte repris de la NBA ou en anglais (titres, légendes, messages, widgets et
+    leurs aides, en-têtes du tableau, infobulles), virgule décimale dans les infobulles."""
+    texts = [at.title[0].value] + captions(at) + [m.value for m in at.markdown if "<style>" not in m.value]
+    texts += [i.value for i in at.info] + [w.value for w in at.warning] + [s.value for s in at.subheader]
+    for kind in ("selectbox", "multiselect", "slider", "checkbox"):
+        for w in getattr(at, kind):
+            texts += [w.label, w.help or ""] + [str(o) for o in getattr(w, "options", [])]
+    texts += list(at.dataframe[0].value.columns) if at.dataframe else []
+    hovers = [c[0] for t in spec(at)["data"] if t.get("mode") == "markers" for c in t["customdata"]]
+    bad = [t for t in texts + hovers if re.search(r"garbage|clipp|-- |Offloads", str(t))]
+    assert not bad, bad
+    assert not [h for h in hovers if re.search(r"\d\.\d", h)], [h for h in hovers if re.search(r"\d\.\d", h)][:3]
+    assert spec(at)["layout"].get("separators") == ", "
+
+
 # --- NBA : rendu historique ---------------------------------------------------
 at = new()
 assert not at.exception, at.exception
@@ -153,8 +170,10 @@ assert len(hidden) == 1 and "moins de 5 matchs ou 520 minutes" in hidden[0], cap
 n_hidden = int(hidden[0].split()[0])
 n_shown = points(at)
 assert not any(c.startswith("◆ Losange") for c in captions(at))
-assert "Classement des équipes pas encore disponible pour ce sport." in [i.value for i in at.info]
+assert not [s for s in at.subheader if s.value == "Classement des équipes"] and not at.info
+assert widget(at, "slider", "Minutes par match minimum").proto.format == "%.0f"
 no_em_dash(at)
+no_nba_text(at)
 ok(f"Rugby : Top 14 2025-26 par défaut, {n_shown} points, {n_hidden} échantillons courts masqués")
 
 # Légende : couleurs seules, fixes par famille
@@ -209,10 +228,24 @@ nc = [c for c in captions(at) if " NC (" in c]
 assert len(nc) == 1 and "sous 35 tentatives" in nc[0], captions(at)
 assert spec(at)["layout"]["yaxis"]["ticksuffix"] == " %" and "ticksuffix" not in spec(at)["layout"]["xaxis"]
 table = at.dataframe[0].value
-col = table["% au pied (transformations et pénalités)"]
+col = table["% au pied"]
 assert col.str.fullmatch(r"\d+ % \(\d+/\d+\)").sum() > 10 and (col == "NC").any()
 assert sorted_by_name(table, "top14", ["2025-26"])  # tri alphabétique, quel que soit Y
-ok("Rugby : % au pied en Y, NC retirés du graph, « NC » et détail réussis/tentatives dans le tableau")
+# Non-buteurs absents du tableau, comptés au-dessus du tableau (D1.9)
+missing = [c for c in captions(at) if " sans valeur pour " in c and "« % au pied »" in c]
+assert len(missing) == 1 and missing[0].endswith("absents du graph et du tableau."), captions(at)
+n_missing = int(missing[0].split()[0])
+# Curseurs à 0, sans filtre : non-buteurs + lignes du tableau = tous les joueurs de la saison
+assert n_missing + len(table) == len(rugby_stats("2025-26", competition="top14")), (n_missing, len(table))
+# Piliers : graph vide à cause des tentatives, pas des minutes (curseur à 0) : message selon la cause
+widget(at, "multiselect", "Filtrer par poste (optionnel)").set_value(["Pilier"]).run()
+assert not at.exception, at.exception
+(warn,) = [w.value for w in at.warning]
+assert warn.startswith("Aucun joueur à afficher : ") and "« % au pied »" in warn, warn
+assert "minimum de minutes" not in warn, warn
+widget(at, "multiselect", "Filtrer par poste (optionnel)").set_value([]).run()
+ok(f"Rugby : % au pied en Y, NC retirés du graph, « NC » et détail réussis/tentatives dans le tableau, "
+   f"{n_missing} non-buteurs comptés, message de graph vide des piliers : {warn}")
 
 # Stat peu fiable : mention dans le sélecteur et sous le graph
 y = widget(at, "selectbox", "Statistique en ordonnée (Y)")
@@ -241,7 +274,6 @@ assert widget(at, "button", "Voir le profil radar") is None
 ok("Rugby : bouton radar présent, message pour un joueur à échantillon court masqué")
 
 # Bouton radar : dépose sport, compétition, saison, période et identifiant du joueur
-from data_sources.rugby import get_player_stats as rugby_stats
 _r = rugby_stats("2025-26", competition="top14")
 _target = _r[_r["position_group"] == "Ailier"].sort_values("minutes_total").iloc[-1]
 radar_at = AppTest.from_file(PAGE, default_timeout=300)
@@ -282,13 +314,19 @@ assert at.title[0].value == "Rugby · Pro D2 · 2025-26", at.title[0].value
 assert widget(at, "selectbox", "Saison").options[1:] == ["2025-26", "2024-25", "2023-24", "2022-23"]
 widget(at, "selectbox", "Statistiques utilisées").set_value("Phase régulière").run()
 assert not at.exception and points(at) > 200
+# Équipes triées sans accents (Béziers avant Brive), noms d'usage courts
+teams = widget(at, "multiselect", "Filtrer par équipe (optionnel)").options
+assert teams == sorted(teams, key=base.sort_key) and teams.index("Béziers") < teams.index("Brive"), teams
+assert not {"Biarritz Olympique", "Stade Francais Paris", "Lyon O.U."} & set(teams), teams
+no_nba_text(at)
 ok("Rugby : passage au Pro D2, saison remise à 2025-26, phase régulière")
 
 # Toutes les saisons
 season = widget(at, "selectbox", "Saison")
 season.set_value(season.options[0]).run()
 assert not at.exception, at.exception
-assert at.title[0].value == "Rugby · Pro D2 · Toutes les saisons (2022-23 → 2025-26)", at.title[0].value
+assert at.title[0].value == ("Rugby · Pro D2 · Toutes les saisons (2022-23 → 2025-26) · Saison complète "
+                              "(phases finales incluses)"), at.title[0].value
 assert widget(at, "selectbox", "Statistiques utilisées") is None and points(at) > 600
 table = at.dataframe[0].value
 assert list(table.columns[:3]) == ["Joueur", "Saison", "Équipe"]
@@ -310,7 +348,8 @@ widget(at, "selectbox", "Compétition").set_value("top14").run()
 season_reset_pushed(at, "Rugby · Top 14 · 2025-26")
 season = widget(at, "selectbox", "Saison")
 season.set_value(season.options[0]).run()
-assert at.title[0].value == "Rugby · Top 14 · Toutes les saisons (2021-22 → 2025-26)"
+assert at.title[0].value == ("Rugby · Top 14 · Toutes les saisons (2021-22 → 2025-26) · Saison complète "
+                              "(phases finales incluses)"), at.title[0].value
 widget(at, "selectbox", "Compétition").set_value("prod2").run()
 season_reset_pushed(at, "Rugby · Pro D2 · 2025-26")
 widget(at, "selectbox", "Statistique en ordonnée (Y)").set_value("metres_per80").run()
