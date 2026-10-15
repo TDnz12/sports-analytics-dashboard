@@ -16,7 +16,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from data_sources import SPORTS
-from data_sources.base import ALL_SEASONS, incomplete_data_warning, normalize_name, shared_season, sort_key
+from data_sources.base import ALL_SEASONS, incomplete_data_warning, shared_season, sort_key
 
 st.set_page_config(page_title="Sports Analytics Dashboard", layout="wide")
 
@@ -1140,8 +1140,9 @@ def _detail_table():
         sort_cols = sport.detail_sort_columns + (["season"] if is_all_seasons else [])
         base = base.sort_values(
             sort_cols, na_position="last",
-            # Sans accents ni casse : "Écoiffier" avec les E, "le Brun" avec les L.
-            key=lambda col: col.map(normalize_name) if col.name != "season" else col,
+            # Sans accents ni casse, même règle que les autres listes (data_sources.base.sort_key) :
+            # "Écoiffier" avec les E, "le Brun" avec les L.
+            key=lambda col: col.map(sort_key) if col.name != "season" else col,
         )
     else:
         base = base.sort_values(["_low", "_sort"], ascending=[True, False], na_position="last")

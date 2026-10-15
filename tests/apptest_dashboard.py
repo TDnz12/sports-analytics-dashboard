@@ -62,12 +62,12 @@ def index_hidden(at):
 
 
 def name_key(competition, seasons):  # libellé affiché -> clé de tri (nom de famille, prénom)
-    from data_sources.base import normalize_name
+    from data_sources.base import sort_key
     from data_sources.rugby import stats
     keys = {}
     for season in seasons:
         df = stats.get_player_stats(season, competition=competition)
-        keys.update({(lbl, season): (normalize_name(ln), normalize_name(fn))
+        keys.update({(lbl, season): (sort_key(ln), sort_key(fn))
                      for lbl, ln, fn in zip(df["player_label"], df["last_name"], df["first_name"])})
     return keys
 

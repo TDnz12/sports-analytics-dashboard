@@ -12,6 +12,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pandas as pd
+
 from data_sources import SPORTS
 from data_sources.rugby import schema, stats
 
@@ -71,6 +73,52 @@ class LectureTest(unittest.TestCase):
         with mock.patch.object(schema, "RUGBY_PROCESSED_SCHEMA_VERSION", 999):
             with self.assertRaises(FileNotFoundError):
                 stats.get_player_stats("2024-25", competition="top14")
+
+
+class NomsDeJoueursTest(unittest.TestCase):
+    def test_une_graphie_par_joueur(self):
+        """Nom, prénom et nom de famille identiques sur toutes les saisons des deux compétitions
+        (29 identifiants ont plusieurs graphies dans la source), sauf les identifiants exclus."""
+        names = {}
+        for comp in ("top14", "prod2"):
+            for season in schema.season_labels(comp):
+                df = stats.get_player_stats(season, competition=comp)
+                for uid, *n in zip(df["player_uid"], df["player"], df["first_name"], df["last_name"]):
+                    names.setdefault(uid, set()).add(tuple(n))
+        several = {uid for uid, n in names.items() if len(n) > 1}
+        self.assertEqual(several, stats.SINGLE_NAME_EXCLUDED)
+
+    def test_identifiant_exclu_garde_ses_graphies(self):
+        seasons = {s: stats.get_player_stats(s, competition="prod2") for s in ("2023-24", "2025-26")}
+        shown = {s: df.loc[df["player_uid"] == "icw:229659", "player"].tolist() for s, df in seasons.items()}
+        self.assertEqual(shown, {"2023-24": ["Aurelien Lisena"], "2025-26": ["Aurelien Lafforgue"]})
+
+    def test_alldritt_en_2021_22(self):
+        df = stats.get_player_stats("2021-22", competition="top14")
+        self.assertEqual(df.loc[df["player_uid"] == "icw:157570", "player"].tolist(), ["Grégory Alldritt"])
+
+    def test_graphie_accentuee_prioritaire(self):
+        lineups = pd.DataFrame({
+            "player_uid": ["a", "a", "b", "b"],
+            "player_name": ["Grégory X", "Gregory X", "Grégory Y", "Greg Y"],
+            "first_name": ["Grégory", "Gregory", "Grégory", "Greg"], "last_name": ["X", "X", "Y", "Y"],
+            "date_utc": [1, 2, 1, 2],
+        })
+        out = stats.canonical_names(lineups)
+        self.assertEqual(out.loc["a", "player"], "Grégory X")  # même nom sans accents : accentué
+        self.assertEqual(out.loc["b", "player"], "Greg Y")     # autre nom : le plus récent
+
+    def test_corrections_manuelles(self):
+        df = stats.get_player_stats("2025-26", competition="top14")
+        self.assertEqual(df.loc[df["player_uid"] == "icw:199515", "player"].tolist(), ["Gaël Fickou"])
+        with mock.patch.dict(stats.PLAYER_DISPLAY_NAMES, {"icw:157570": "Test Alldritt"}):
+            df = stats.get_player_stats("2025-26", competition="top14")
+        self.assertEqual(df.loc[df["player_uid"] == "icw:157570", "player"].tolist(), ["Test Alldritt"])
+
+    def test_hilsenbeck(self):
+        for season in ("2022-23", "2023-24"):
+            df = stats.get_player_stats(season, competition="prod2")
+            self.assertEqual(df.loc[df["player_uid"] == "icw:137322", "player"].tolist(), ["Chris Hilsenbeck"])
 
 
 class CatalogueTest(unittest.TestCase):

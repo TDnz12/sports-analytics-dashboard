@@ -10,6 +10,8 @@ colonnes d'affichage calculées à la lecture (pas stockées dans le cache) :
 - position_family : "Indéterminé" à la place d'une valeur vide, pour la couleur du graph ;
 - cards : "jaunes / rouges" de la saison ;
 - team : nom d'affichage avec ses accents (TEAM_DISPLAY_NAMES), player_label recalculé avec lui ;
+- player, first_name, last_name : une graphie par joueur sur toutes les saisons (player_names),
+  puis les corrections manuelles PLAYER_DISPLAY_NAMES ; player_label recalculé avec elles ;
 - clubs : "Bordeaux-Bègles (10), Perpignan (4)" (matchs joués, ordre chronologique) pour un joueur
   passé par plusieurs clubs dans la saison, sinon vide ; club_names : tuple des clubs où il a joué
   (filtre équipe du Dashboard : il apparaît dans chacun) ;
@@ -19,9 +21,11 @@ colonnes d'affichage calculées à la lecture (pas stockées dans le cache) :
 
 from __future__ import annotations
 
+import functools
 import json
 
 import pandas as pd
+from unidecode import unidecode
 
 from ..base import Metric, read_cache
 from . import schema
@@ -43,6 +47,84 @@ TEAM_DISPLAY_NAMES = {
     "icw:4003": "Stade Français",
 }
 
+# Noms de joueurs à l'affichage. La source écrit presque tous les noms sans accents, et un même
+# joueur (identifiant) change parfois de graphie d'un match à l'autre ("Greg Alldritt" puis
+# "Grégory Alldritt", "Adrien Lapegue Lafaye" puis "Adrien Lapegue"). Règle 1 (canonical_names) :
+# une seule graphie par identifiant, sur toutes les saisons et les deux compétitions. Règle 2 :
+# PLAYER_DISPLAY_NAMES, corrections manuelles appliquées en dernier (nom affiché seulement : le tri
+# ignore les accents). Comme TEAM_DISPLAY_NAMES : à la lecture, caches et identifiants inchangés.
+# Chaque entrée vérifiée contre une source externe (presse, Wikipedia, all.rugby) le 15 octobre 2026.
+PLAYER_DISPLAY_NAMES = {
+    "icw:206243": "Léo Barré",
+    "icw:237225": "Émilien Gailleton",
+    "icw:244532": "Théo Attissogbe",
+    "icw:199515": "Gaël Fickou",
+    "icw:241689": "Nicolas Depoortère",
+    "icw:159140": "Gaëtan Barlot",
+    "icw:245059": "Léon Darricarrère",
+    "icw:177800": "Mickaël Guillard",
+    "icw:187175": "Gabin Villière",
+    "icw:173503": "Thomas Jolmès",
+    "icw:166457": "Régis Montagne",
+    "icw:120507": "Rémi Picquette",
+    "icw:233225": "Clément Vergé",
+    "icw:229823": "Léo Banos",
+    "icw:184178": "Léo Coly",
+    "icw:243934": "Léo Carbonneau",
+    "icw:120396": "Sébastien Bézy",
+    "icw:244533": "Axel Despérès",
+    "icw:243881": "Lois Guérois-Galisson",
+    "icw:189645": "Mickaël Ivaldi",
+    "icw:203198": "Théo Millet",
+    "icw:241359": "Théo Chabouni",
+    "icw:162570": "Enzo Hervé",
+    "icw:188484": "Arthur Retière",
+    "icw:243819": "Mathis Ferté",
+    "icw:161080": "Loïc Crédoz",
+    "icw:244765": "Maël Moustin",
+    "icw:158404": "Julien Hériteau",
+    "icw:137322": "Chris Hilsenbeck",  # faute de frappe de la source ("Hilsenback")
+}
+
+# Identifiants laissés hors de la règle 1 (graphie de chaque saison gardée) : deux noms de famille
+# sous le même identifiant, peut-être deux joueurs (anomalie de la source, vérifiée le 15 octobre
+# 2026 : même club, mêmes maillots, jamais sur la même feuille de match).
+SINGLE_NAME_EXCLUDED = {"icw:229659"}  # "Aurelien Lafforgue" / "Aurelien Lisena", Pro D2
+
+
+def canonical_names(lineups: pd.DataFrame) -> pd.DataFrame:
+    """Règle 1 sur des feuilles de match (player_uid, player_name, first_name, last_name,
+    date_utc) : la graphie du match le plus récent, sauf si un autre match donne le même nom
+    avec des accents (égal une fois accents et casse retirés) ; la graphie accentuée l'emporte
+    alors. Une ligne par identifiant, colonnes player, first_name, last_name."""
+    df = lineups.sort_values("date_utc", kind="stable")
+    plain = df["player_name"].map(lambda n: unidecode(n).casefold())
+    df = df[plain == plain.groupby(df["player_uid"]).transform("last")]
+    df = (df.assign(_accented=df["player_name"] != df["player_name"].map(unidecode))
+          .sort_values("_accented", kind="stable"))
+    best = df.drop_duplicates("player_uid", keep="last").set_index("player_uid")
+    return best.rename(columns={"player_name": "player"})[["player", "first_name", "last_name"]]
+
+
+@functools.lru_cache(maxsize=1)
+def player_names() -> pd.DataFrame:
+    """canonical_names sur toutes les feuilles de match versionnées (tables brutes de
+    data_cache/), lues une fois par processus (environ 0,1 s), sans SINGLE_NAME_EXCLUDED. Une
+    compétition sans tables brutes (Six Nations, pas encore construit) est sautée."""
+    frames = []
+    for comp in schema.COMPETITION_SPECS:
+        for season in schema.season_labels(comp):
+            path = schema.raw_table_path(comp, season, "lineups")
+            if not path.exists():
+                continue
+            lineups = pd.read_parquet(path, columns=["match_uid", "player_uid", "player_name",
+                                                     "first_name", "last_name"])
+            dates = pd.read_parquet(schema.raw_table_path(comp, season, "matches"),
+                                    columns=["match_uid", "date_utc"])
+            frames.append(lineups.merge(dates, on="match_uid"))
+    names = canonical_names(pd.concat(frames, ignore_index=True))
+    return names.drop(index=list(SINGLE_NAME_EXCLUDED), errors="ignore")
+
 
 def get_player_stats(season: str, force_refresh: bool = False, period: str = "all",
                      competition: str = "top14") -> pd.DataFrame:
@@ -59,6 +141,10 @@ def get_player_stats(season: str, force_refresh: bool = False, period: str = "al
         )
     df = df.copy()
     df["team"] = df["team_uid"].map(TEAM_DISPLAY_NAMES).fillna(df["team"])
+    names = player_names()
+    for col in ("player", "first_name", "last_name"):
+        df[col] = df["player_uid"].map(names[col]).fillna(df[col])
+    df["player"] = df["player_uid"].map(PLAYER_DISPLAY_NAMES).fillna(df["player"])
     # Même règle que aggregate.aggregate_season, avec le nom d'équipe accentué.
     dup = df["player"].duplicated(keep=False)
     df["player_label"] = df["player"].where(~dup, df["player"] + " (" + df["team"] + ")")
