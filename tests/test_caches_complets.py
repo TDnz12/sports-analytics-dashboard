@@ -63,6 +63,15 @@ class CachesCompletsTest(unittest.TestCase):
                         self.assertIn(col, df.columns)
                         self.assertTrue(played[col].notna().all(), f"{col} manquant")
 
+    def test_fiabilite_dans_les_caches_traites(self):
+        # Fiabilité entièrement vide = cache écrit après un échec de _fetch_reliability (le code
+        # ne doit plus le faire, voir test_fiabilite_partielle) : la colonne serait perdue sur le site.
+        for season in nba.SEASONS:
+            for suffix in ("", "_playoffs"):
+                with self.subTest(saison=season, periode=suffix or "régulière"):
+                    df = pd.read_parquet(PROC / f"{season}{suffix}.parquet")
+                    self.assertTrue(df["reliability_pct"].notna().any(), "reliability_pct entièrement vide")
+
     def test_caches_salaires(self):
         # kaggle_raw est lu sans version de schéma (voir nba._load_kaggle_raw) ; legacy l'est.
         self.assertGreater(len(pd.read_parquet(nba.KAGGLE_RAW_CACHE)), 0)

@@ -14,6 +14,8 @@ from unittest import mock
 import pandas as pd
 
 from data_sources import nba
+from data_sources.base import INCOMPLETE_DATA_ATTR
+from tests import sans_reseau
 
 SEASON = "2022-23"  # fenêtre de fiabilité : 2022-23, 2021-22, 2020-21
 MISSING_SEASON = "2020-21"
@@ -29,17 +31,25 @@ def _fake_stats_all_ok(season, force_refresh=False):
     return pd.DataFrame({"player_id": [1, 2], "games_played": [60, 41]})
 
 
+def _fake_shooting(season, period="regular", force_refresh=False):
+    return pd.DataFrame({"player_id": [1, 2], **{c: [1.0, 2.0] for c in nba.SHOOTING_TOTAL_COLS}})
+
+
 def _fake_enrich(stats, season, force_refresh):
     return stats.assign(salary=[10_000_000.0, 5_000_000.0])
 
 
 class FiabilitePartielleTest(unittest.TestCase):
+    def setUp(self):
+        sans_reseau.couper_reseau(self)
+
     def _run(self, fetch_stats):
         written = []
         with mock.patch.object(nba, "read_cache", return_value=None), \
              mock.patch.object(nba, "write_cache", side_effect=lambda df, path, **k: written.append((path, df))), \
              mock.patch.object(nba, "_fetch_nba_api_stats", side_effect=fetch_stats), \
              mock.patch.object(nba, "_fetch_team_games_possible", return_value=82), \
+             mock.patch.object(nba, "_fetch_shooting_totals", side_effect=_fake_shooting), \
              mock.patch.object(nba, "_with_final_game_team", side_effect=lambda stats, s, f: (stats, True)), \
              mock.patch.object(nba, "_enrich_stats", side_effect=_fake_enrich):
             result = nba.get_player_stats(SEASON)
@@ -53,6 +63,7 @@ class FiabilitePartielleTest(unittest.TestCase):
         self.assertEqual(reliability, [], "cache brut de fiabilité écrit malgré un résultat partiel")
         # Valeur laissée manquante plutôt qu'une valeur fausse calculée sur 2 saisons sur 3.
         self.assertTrue(result["reliability_pct"].isna().all())
+        self.assertEqual(result.attrs[INCOMPLETE_DATA_ATTR], ["fiabilité"])
 
     def test_fiabilite_en_erreur_cache_traite_non_ecrit(self):
         with mock.patch.object(nba, "_fetch_reliability", side_effect=RuntimeError("échec simulé")):
@@ -66,6 +77,7 @@ class FiabilitePartielleTest(unittest.TestCase):
         result, processed, reliability = self._run(_fake_stats_all_ok)
         self.assertEqual(len(processed), 1)
         self.assertEqual(len(reliability), 1)
+        self.assertNotIn(INCOMPLETE_DATA_ATTR, result.attrs)
         expected = {1: 180 / 246, 2: 123 / 246}
         for pid, value in expected.items():
             self.assertAlmostEqual(processed[0].set_index("player_id").loc[pid, "reliability_pct"], value)

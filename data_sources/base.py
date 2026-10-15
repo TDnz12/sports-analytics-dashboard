@@ -116,3 +116,23 @@ def write_cache(df: pd.DataFrame, path: Path, schema_version: int | None = None)
         df = df.copy()
         df[SCHEMA_VERSION_COL] = schema_version
     df.to_parquet(path, index=False)
+
+
+# Posé dans DataFrame.attrs par un get_player_stats dont une partie des données n'a pas pu être
+# chargée (liste de libellés). Les pages l'affichent en bandeau : sur Streamlit Cloud, ces
+# manques n'ont sinon aucune trace visible (seulement les logs).
+INCOMPLETE_DATA_ATTR = "incomplete_data"
+_INCOMPLETE_DATA_EFFECTS = {
+    "totaux de tirs": "3PT% et LF% ajustés indisponibles",
+    "fiabilité": "fiabilité indisponible",
+    "équipe du dernier match": "équipe affichée = équipe d'inscription, pas forcément la dernière",
+}
+
+
+def incomplete_data_warning(df: pd.DataFrame, season: str) -> str | None:
+    """Texte du bandeau "données partielles" pour une saison, ou None si rien ne manque."""
+    missing = df.attrs.get(INCOMPLETE_DATA_ATTR)
+    if not missing:
+        return None
+    effects = " ; ".join(_INCOMPLETE_DATA_EFFECTS.get(m, m) for m in missing)
+    return f"Données partielles pour {season} : {effects}. Les autres stats ne sont pas concernées."

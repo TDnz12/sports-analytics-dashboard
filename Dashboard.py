@@ -16,7 +16,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from data_sources import SPORTS
-from data_sources.base import normalize_name
+from data_sources.base import incomplete_data_warning, normalize_name
 
 st.set_page_config(page_title="Sports Analytics Dashboard", layout="wide")
 
@@ -344,12 +344,15 @@ def load_team_ranking(sport_key: str, season: str, period: str = "regular") -> p
 if is_all_seasons:
     frames = []
     failed_seasons = []
+    partial_warnings = []  # saisons chargées mais incomplètes (data_sources.base.INCOMPLETE_DATA_ATTR)
     for s in ALL_SEASONS_KEYS:
         try:
             # Période par défaut du sport (== stats_period ici de toute façon, voir plus haut) :
             # le mode "Toutes les saisons" n'a pas le sélecteur de période (NBA : saison
             # régulière seule ; rugby : saison complète).
             frames.append(load_data(sport.key, s, _default_period))
+            if (msg := incomplete_data_warning(frames[-1], s)):
+                partial_warnings.append(msg)
         except Exception as exc:  # nba_api down, pas d'internet, dataset Kaggle absent, etc.
             failed_seasons.append((s, exc))
     if not frames:
@@ -361,12 +364,16 @@ if is_all_seasons:
             "Certaines saisons n'ont pas pu être chargées et sont absentes du graph : "
             + ", ".join(f"{s} ({exc})" for s, exc in failed_seasons)
         )
+    if partial_warnings:
+        st.warning("\n\n".join(partial_warnings))
 else:
     try:
         df = load_data(sport.key, season, stats_period)
     except Exception as exc:
         st.error(f"Impossible de charger les données pour {season} : {exc}")
         st.stop()
+    if (msg := incomplete_data_warning(df, season)):
+        st.warning(msg)
 
 if df.empty:
     st.warning(f"Aucune donnée disponible pour {season}.")

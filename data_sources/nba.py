@@ -48,7 +48,9 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from .base import Metric, RAW_ROOT, PROCESSED_ROOT, normalize_name, read_cache, write_cache
+from .base import (
+    INCOMPLETE_DATA_ATTR, Metric, RAW_ROOT, PROCESSED_ROOT, normalize_name, read_cache, write_cache,
+)
 from .radar_common import (  # moteur du radar, partagé avec le rugby
     _percentile_by_position, _zscore_by_position, empty_axis, padded_pct, score_axes,
 )
@@ -1263,6 +1265,12 @@ def get_player_stats(season: str, force_refresh: bool = False, period: PlayoffMo
             "recalcul au prochain chargement.",
             processed_path.name,
         )
+        working.attrs[INCOMPLETE_DATA_ATTR] = [
+            label for label, complete in (("totaux de tirs", shooting_complete),
+                                          ("fiabilité", reliability_complete),
+                                          ("équipe du dernier match", final_team_complete))
+            if not complete
+        ]
     return working
 
 

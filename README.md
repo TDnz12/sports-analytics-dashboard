@@ -86,6 +86,15 @@ cd tests/js && npm install && npm test                 # JavaScript de la grille
 
 Les tests Python et AppTest lisent les données en cache dans `data_cache/` sans jamais les modifier. Les tests JavaScript testent directement le code de la grille tel qu'il est dans `pages/2_Effectifs.py`.
 
+Avant de commiter un changement qui touche du code commun aux sports (pages, `radar_common.py`, `base.py`), vérifier que les pages NBA affichent exactement la même chose qu'avant :
+
+```bash
+.venv/bin/python scripts/instantanes_nba.py              # copie de travail contre HEAD
+.venv/bin/python scripts/instantanes_nba.py --ref <commit>
+```
+
+Le script rend 11 situations NBA (Dashboard, Radar, Effectifs) dans le commit de référence et dans la copie de travail, puis compare tout ce qui est affiché : code de sortie 0 si tout est identique, sinon les différences sont listées.
+
 ## Architecture
 
 ```
@@ -103,6 +112,7 @@ data_cache/
 static/logos/nba/             # logos d'époque, servis par Streamlit (.streamlit/config.toml)
 scripts/
   prefill_cache.py
+  instantanes_nba.py          # comparaison des pages NBA avec un commit de référence
   update_nba_logos.py
 tests/                        # tests Python et AppTest
   js/                         # tests JavaScript

@@ -29,6 +29,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from data_sources import SPORTS
+from data_sources.base import incomplete_data_warning
 
 st.set_page_config(page_title="Radar de comparaison · Sports Analytics", layout="wide")
 
@@ -263,6 +264,8 @@ try:
 except Exception as exc:
     st.error(f"Impossible de charger les données pour {season} : {exc}")
     st.stop()
+if (msg := incomplete_data_warning(df, season)):
+    st.warning(msg)
 
 if df.empty:
     st.warning(f"Aucune donnée disponible pour {season}.")

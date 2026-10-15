@@ -14,6 +14,8 @@ from unittest import mock
 import pandas as pd
 
 from data_sources import nba
+from data_sources.base import INCOMPLETE_DATA_ATTR
+from tests import sans_reseau
 
 SEASON = "2024-25"
 
@@ -32,17 +34,25 @@ def _fake_game_log(season, force_refresh=False):
     })
 
 
+def _fake_shooting(season, period="regular", force_refresh=False):
+    return pd.DataFrame({"player_id": [1, 2, 3], **{c: [1.0, 2.0, 3.0] for c in nba.SHOOTING_TOTAL_COLS}})
+
+
 def _fake_enrich(stats, season, force_refresh):
     return stats.assign(salary=[1.0, 2.0, 3.0])
 
 
 class EquipeDernierMatchTest(unittest.TestCase):
+    def setUp(self):
+        sans_reseau.couper_reseau(self)
+
     def _run(self, game_log):
         written = []
         with mock.patch.object(nba, "read_cache", return_value=None), \
              mock.patch.object(nba, "write_cache", side_effect=lambda df, path, **k: written.append((path, df))), \
              mock.patch.object(nba, "_fetch_nba_api_stats", side_effect=_fake_stats), \
              mock.patch.object(nba, "_fetch_player_game_log", side_effect=game_log), \
+             mock.patch.object(nba, "_fetch_shooting_totals", side_effect=_fake_shooting), \
              mock.patch.object(nba, "_fetch_reliability", return_value=(pd.DataFrame({"player_id": [1, 2, 3], "reliability_pct": [1.0, 0.5, 0.0]}), True)), \
              mock.patch.object(nba, "_enrich_stats", side_effect=_fake_enrich):
             result = nba.get_player_stats(SEASON)
@@ -53,6 +63,7 @@ class EquipeDernierMatchTest(unittest.TestCase):
         result, processed = self._run(_fake_game_log)
         self.assertEqual(result.set_index("player_id")["team"].to_dict(), {1: "MEM", 2: "BOS", 3: "LAL"})
         self.assertEqual(len(processed), 1)
+        self.assertNotIn(INCOMPLETE_DATA_ATTR, result.attrs)
 
     def test_game_log_indisponible_cache_traite_non_ecrit(self):
         def failing(season, force_refresh=False):
@@ -61,6 +72,8 @@ class EquipeDernierMatchTest(unittest.TestCase):
         # Valeurs NBA gardées telles quelles, et rien d'écrit : recalcul au prochain chargement.
         self.assertEqual(result["team"].tolist(), ["ORL", "BOS", "LAL"])
         self.assertEqual(processed, [])
+        # Signalé à l'interface (bandeau "données partielles"), pas seulement dans les logs.
+        self.assertEqual(result.attrs[INCOMPLETE_DATA_ATTR], ["équipe du dernier match"])
 
 
 if __name__ == "__main__":

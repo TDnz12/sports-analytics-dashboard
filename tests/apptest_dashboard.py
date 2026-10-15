@@ -320,5 +320,31 @@ widget(at, "selectbox", "Sport").set_value("mma").run()
 assert not at.exception and any("**Basketball (NBA)**, **Rugby**" in i.value for i in at.info), [i.value for i in at.info]
 ok("Sport indisponible : message avec les sports actifs")
 
+# Données partielles : bandeau visible quand get_player_stats signale un manque (attrs).
+# SPORTS["nba"] remplacé le temps du contrôle, restauré même en cas d'échec.
+import dataclasses
+import streamlit as st
+from data_sources import SPORTS
+_nba = SPORTS["nba"]
+
+
+def _partial_stats(season, *args, **kwargs):
+    df = _nba.get_player_stats(season, *args, **kwargs).copy()
+    df.attrs[base.INCOMPLETE_DATA_ATTR] = ["fiabilité"]
+    return df
+
+
+SPORTS["nba"] = dataclasses.replace(_nba, get_player_stats=_partial_stats)
+st.cache_data.clear()
+try:
+    at = new()
+    assert not at.exception, at.exception
+    assert any(w.value == "Données partielles pour 2024-25 : fiabilité indisponible. Les autres stats ne "
+               "sont pas concernées." for w in at.warning), [w.value for w in at.warning]
+finally:
+    SPORTS["nba"] = _nba
+    st.cache_data.clear()
+ok("données partielles : bandeau « Données partielles pour 2024-25 » affiché")
+
 assert not writes, writes
 print("Tous les contrôles du Dashboard sont passés.")
