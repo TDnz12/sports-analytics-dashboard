@@ -14,7 +14,8 @@ et sans logique métier (celle-ci vit dans data_sources/, réutilisée telle que
 
 Plusieurs sports (lot 6 du rugby) : sélecteurs Sport puis Compétition, comme le Dashboard. Par
 défaut, la page reprend le sport et la compétition choisis en dernier, ici ou sur le Dashboard
-(clés de session selected_sport et selected_competition, non liées à un widget), sinon la NBA. Les réglages propres au sport (axes selon les postes, carte,
+(clés de session selected_sport et selected_competition, non liées à un widget), sinon la NBA ;
+de même pour la saison (selected_season, partagée aussi avec Effectifs). Les réglages propres au sport (axes selon les postes, carte,
 colonnes hors radar, notes) sont des champs optionnels de SportConfig ; absents, rendu NBA
 historique.
 """
@@ -29,7 +30,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from data_sources import SPORTS
-from data_sources.base import incomplete_data_warning
+from data_sources.base import ALL_SEASONS, incomplete_data_warning, shared_season
 
 st.set_page_config(page_title="Radar de comparaison · Sports Analytics", layout="wide")
 
@@ -225,12 +226,29 @@ STATS_PERIOD_OPTIONS = sport.stats_periods or {
 # salaire). Défaut repris de sport.default_season (NBA : "2024-25"), sinon la plus récente. Saison
 # revérifiée à chaque run : après un changement de sport ou de compétition, elle peut ne plus
 # faire partie des options ("2024-25" contre "2026"), ce qui ferait lever une erreur au widget.
+# Saison partagée avec le Dashboard et Effectifs (selected_season, voir
+# data_sources.base.shared_season) : reprise à l'arrivée sur la page, après la présélection du
+# bouton du Dashboard. "Toutes les saisons" (absent ici) reste la saison partagée tant que la
+# saison n'est pas changée sur cette page.
 _default_season = sport.default_season if sport.default_season in seasons else seasons[0]
+_shared_season = shared_season(st.session_state, sport.key, competition_key)
+
+
+def _share_season(sport_key: str, competition_key: str | None) -> None:
+    # Saison changée ici : elle remplace aussi un "Toutes les saisons" venu du Dashboard.
+    st.session_state["selected_season"] = (sport_key, competition_key, st.session_state["radar_season"])
+
+
 if preselected_season in seasons:
     st.session_state["radar_season"] = preselected_season
+elif _entering_page and _shared_season in seasons:
+    st.session_state["radar_season"] = _shared_season
 elif st.session_state.get("radar_season") not in seasons:
     st.session_state["radar_season"] = _default_season
-season = st.sidebar.selectbox("Saison", options=seasons, key="radar_season")
+season = st.sidebar.selectbox("Saison", options=seasons, key="radar_season",
+                              on_change=_share_season, args=(sport.key, competition_key))
+if _shared_season != ALL_SEASONS:
+    st.session_state["selected_season"] = (sport.key, competition_key, season)
 # Période : key= pour la même raison que la saison (présélection possible depuis le Dashboard en
 # rugby), revérifiée de même au changement de sport.
 _period_labels = list(STATS_PERIOD_OPTIONS.keys())

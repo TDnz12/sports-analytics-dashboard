@@ -16,7 +16,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from data_sources import SPORTS
-from data_sources.base import incomplete_data_warning, normalize_name
+from data_sources.base import ALL_SEASONS, incomplete_data_warning, normalize_name, shared_season
 
 st.set_page_config(page_title="Sports Analytics Dashboard", layout="wide")
 
@@ -273,13 +273,19 @@ season_options = [ALL_SEASONS_LABEL] + seasons
 # Saison par défaut : sport.default_season (NBA : "2024-25", voir son commentaire dans
 # data_sources/__init__.py), sinon la plus récente.
 _default_season = sport.default_season if sport.default_season in seasons else seasons[0]
-# key="main_season" : permet à d'autres pages (ex. pages/2_Effectifs.py) de
-# lire la saison actuellement affichée ici via st.session_state.get("main_season") et de s'y
-# aligner par défaut, sans mécanisme de navigation dédié -- même session_state partagé que le
-# reste de l'app (voir radar_preselect_season plus bas pour le même principe).
-set_widget_default("main_season", _default_season, valid=season_options)
+# Saison partagée avec le Radar et Effectifs par selected_season (triplet sport, compétition,
+# saison, voir data_sources.base.shared_season), même principe que le sport : reprise à l'arrivée
+# sur la page si elle a été choisie dans ce sport et cette compétition, écrite à chaque run
+# ("Toutes les saisons" sous la forme ALL_SEASONS).
+_shared_season = shared_season(st.session_state, sport.key, competition_key)
+_shared_season = ALL_SEASONS_LABEL if _shared_season == ALL_SEASONS else _shared_season
+if _entering_page and _shared_season in season_options:
+    st.session_state["main_season"] = _shared_season
+else:
+    set_widget_default("main_season", _default_season, valid=season_options)
 season = st.sidebar.selectbox("Saison", options=season_options, key="main_season")
 is_all_seasons = season == ALL_SEASONS_LABEL
+st.session_state["selected_season"] = (sport.key, competition_key, ALL_SEASONS if is_all_seasons else season)
 
 # Statistiques utilisées (saison régulière / playoffs uniquement) : n'affecte QUE le scatter plot
 # principal et le modèle qui le nourrit (voir get_player_stats(..., period=...) dans

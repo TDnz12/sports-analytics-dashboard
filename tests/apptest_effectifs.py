@@ -1,6 +1,7 @@
 """Vérifie la page Effectifs (pages/2_Effectifs.py) avec AppTest : grille, clic sur un nom
 d'équipe (déclencheur open_team simulé comme le navigateur), vue effectif réel, adresse
-?saison=..&equipe=.., bouton retour, synchronisation avec main_season. Lit les caches de
+?saison=..&equipe=.., bouton retour, saison partagée avec les autres pages (selected_season), note
+« Page NBA uniquement » quand le rugby est choisi ailleurs, bandeau « Données partielles ». Lit les caches de
 data_cache/ sans jamais les modifier (écritures interceptées). Environ une minute.
 
 Lancer depuis la racine du projet :  .venv/bin/python tests/apptest_effectifs.py
@@ -170,7 +171,7 @@ ok("photos : IND 2023-24 portrait de saison + repli (Siakam sous TOR), SEA 2004-
 # 6. Équipe inconnue, saison invalide dans l'adresse
 at = new({"saison": "2024-25", "equipe": "XXX"})
 assert not at.exception and "Aucune équipe « XXX »" in at.warning[0].value
-at = new({"saison": "1800-01", "equipe": "BOS"}, {"main_season": "2019-20"})
+at = new({"saison": "1800-01", "equipe": "BOS"}, {"selected_season": ("nba", None, "2019-20")})
 assert not at.exception and at.selectbox(key="effectifs_season").value == "2019-20"
 ok("équipe inconnue : message clair ; saison invalide dans l'adresse : ignorée")
 
@@ -181,12 +182,23 @@ assert not at.exception and dict(at.query_params) == {} and at.title[0].value ==
 assert at.selectbox(key="effectifs_season").value == "2024-25"
 ok("bouton retour : adresse vidée, grille, saison conservée")
 
-# 8. Synchronisation main_season, priorité de l'adresse, changement de saison en vue détaillée
-at = new(state={"main_season": "2019-20"})
+# 8. Saison partagée (selected_season), priorité de l'adresse, changement de saison en vue détaillée
+NBA_ONLY_NOTE = "Page NBA uniquement pour l'instant. Le Dashboard et le Radar restent sur Rugby · Top 14."
+at = new(state={"selected_season": ("nba", None, "2019-20")})
 assert at.selectbox(key="effectifs_season").value == "2019-20"
-at = new(state={"main_season": "Toutes les saisons"})
+assert NBA_ONLY_NOTE not in [c.value for c in at.caption]
+at.selectbox(key="effectifs_season").set_value("2017-18").run()
+assert at.session_state["selected_season"] == ("nba", None, "2017-18")
+at = new(state={"selected_season": ("nba", None, "toutes")})
 assert at.selectbox(key="effectifs_season").value == "2024-25"
-at = new({"saison": "2015-16", "equipe": "GSW"}, {"main_season": "2019-20"})
+assert at.session_state["selected_season"] == ("nba", None, "toutes"), "« Toutes les saisons » écrasée"
+at = new(state={"selected_sport": "rugby", "selected_competition": "top14",
+                "selected_season": ("rugby", "top14", "2023-24")})
+assert at.selectbox(key="effectifs_season").value == "2024-25"
+assert NBA_ONLY_NOTE in [c.value for c in at.caption], [c.value for c in at.caption]
+at.selectbox(key="effectifs_season").set_value("2017-18").run()
+assert at.session_state["selected_season"] == ("rugby", "top14", "2023-24"), "saison rugby écrasée"
+at = new({"saison": "2015-16", "equipe": "GSW"}, {"selected_season": ("nba", None, "2019-20")})
 assert at.selectbox(key="effectifs_season").value == "2015-16"
 at.selectbox(key="effectifs_season").set_value("2016-17").run()
 assert not at.exception and dict(at.query_params) == {"saison": ["2016-17"], "equipe": ["GSW"]}
@@ -194,7 +206,35 @@ assert at.title[0].value.endswith("Effectif réel 2016-17")
 at = new({"saison": "2015-16"})
 at.selectbox(key="effectifs_season").set_value("2016-17").run()
 assert at.selectbox(key="effectifs_season").value == "2016-17", "adresse ?saison= seule : choix écrasé"
-ok("main_season suivie par défaut, adresse prioritaire, changement de saison suivi par l'adresse")
+ok("saison partagée suivie par défaut (rugby et « Toutes les saisons » ignorés, note NBA), adresse "
+   "prioritaire, changement de saison suivi par l'adresse")
+
+# 8 bis. Données partielles : bandeau seulement pour l'équipe du dernier match (seul manque qui
+# concerne cette page), dans la grille et dans la vue effectif réel. SPORTS["nba"] remplacé le
+# temps du contrôle, restauré même en cas d'échec.
+import dataclasses
+import streamlit as st
+from data_sources import SPORTS
+_nba = SPORTS["nba"]
+TEAM_WARNING = ("Données partielles pour 2024-25 : équipe affichée = équipe d'inscription, pas forcément "
+                "la dernière. Les autres stats ne sont pas concernées.")
+try:
+    for missing, expected in ((["fiabilité", "totaux de tirs"], []),
+                              (["fiabilité", "équipe du dernier match"], [TEAM_WARNING])):
+        def _partial_stats(season, *args, _missing=missing, **kwargs):
+            df = _nba.get_player_stats(season, *args, **kwargs).copy()
+            df.attrs[base.INCOMPLETE_DATA_ATTR] = _missing
+            return df
+        SPORTS["nba"] = dataclasses.replace(_nba, get_player_stats=_partial_stats)
+        st.cache_data.clear()
+        for params in ({}, {"saison": "2024-25", "equipe": "BOS"}):
+            at = new(params)
+            assert not at.exception, at.exception
+            assert [w.value for w in at.warning] == expected, (missing, params, [w.value for w in at.warning])
+finally:
+    SPORTS["nba"] = _nba
+    st.cache_data.clear()
+ok("données partielles : bandeau pour l'équipe du dernier match seulement, grille et effectif réel")
 
 # 9. Caches intacts, aucune écriture
 for s in seasons:

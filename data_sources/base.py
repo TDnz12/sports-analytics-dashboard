@@ -129,10 +129,27 @@ _INCOMPLETE_DATA_EFFECTS = {
 }
 
 
-def incomplete_data_warning(df: pd.DataFrame, season: str) -> str | None:
-    """Texte du bandeau "données partielles" pour une saison, ou None si rien ne manque."""
-    missing = df.attrs.get(INCOMPLETE_DATA_ATTR)
+def incomplete_data_warning(df: pd.DataFrame, season: str, relevant=None) -> str | None:
+    """Texte du bandeau "données partielles" pour une saison, ou None si rien ne manque.
+    `relevant` : libellés des manques qui concernent la page (Effectifs : seulement "équipe du
+    dernier match", elle n'affiche ni tirs ni fiabilité) ; None = tous."""
+    missing = [m for m in df.attrs.get(INCOMPLETE_DATA_ATTR) or [] if relevant is None or m in relevant]
     if not missing:
         return None
     effects = " ; ".join(_INCOMPLETE_DATA_EFFECTS.get(m, m) for m in missing)
     return f"Données partielles pour {season} : {effects}. Les autres stats ne sont pas concernées."
+
+
+# Saison partagée entre les pages (st.session_state["selected_season"]) : triplet (sport,
+# compétition ou None, saison), reprise seulement dans le sport et la compétition où elle a été
+# choisie. ALL_SEASONS : mode "Toutes les saisons" du Dashboard, que le Radar et Effectifs n'ont
+# pas ; ils le laissent intact tant qu'on n'y change pas la saison.
+ALL_SEASONS = "toutes"
+
+
+def shared_season(session_state, sport_key: str, competition_key: str | None) -> str | None:
+    """Saison partagée si elle a été choisie dans ce sport et cette compétition, sinon None."""
+    shared = session_state.get("selected_season")
+    if shared and tuple(shared[:2]) == (sport_key, competition_key):
+        return shared[2]
+    return None

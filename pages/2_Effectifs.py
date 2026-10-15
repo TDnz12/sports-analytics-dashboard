@@ -8,7 +8,7 @@ Effectifs — fusion des anciennes pages Rosters et Mercato. Deux vues, choisies
 
 Passage de l'une à l'autre : le nom d'équipe de chaque carte est un vrai lien <a href="?saison=..
 &equipe=..">. Clic simple : le JS du composant bloque le rechargement complet (qui ferait perdre la
-session, donc la synchronisation avec main_season) et prévient Python par setTriggerValue ;
+session, donc la saison partagée avec les autres pages) et prévient Python par setTriggerValue ;
 Python place saison/equipe dans st.query_params, ce que Streamlit pousse dans l'historique du
 navigateur (pushState) -- le bouton Précédent ramène donc à la grille, et l'adresse d'un effectif
 est partageable. Clic du milieu / Cmd / Ctrl : lien suivi normalement (nouvel onglet).
@@ -86,6 +86,7 @@ import pandas as pd
 import streamlit as st
 
 from data_sources import SPORTS
+from data_sources.base import ALL_SEASONS, incomplete_data_warning, shared_season
 
 st.set_page_config(page_title="Effectifs · Sports Analytics", layout="wide")
 
@@ -279,19 +280,27 @@ def season_photo_team_ids(sport_key: str, season: str) -> dict[int, int]:
 
 
 # Saison : une saison valide dans l'adresse (?saison=, lien d'effectif partagé ou bouton
-# Précédent) l'emporte ; sinon, par défaut, alignée sur la saison actuellement affichée dans la
-# sidebar principale de Dashboard.py (st.session_state["main_season"], partagé -- voir son
-# commentaire) si elle est valide ici (une vraie saison, pas le mode combiné "Toutes les saisons"
-# qui n'a pas d'équivalent sur cette page). key= (pas index= recalculé) pour que le choix de
-# l'utilisateur SUR CETTE PAGE survive aux reruns suivants, même principe que radar_season.
-# Toujours la saison régulière (get_mercato_lineup ne gère que ça, voir sa docstring).
+# Précédent) l'emporte ; sinon, à l'arrivée sur la page, la saison partagée avec le Dashboard et
+# le Radar (selected_season, voir data_sources.base.shared_season) si elle est valide ici (une
+# vraie saison NBA, pas le mode combiné "Toutes les saisons" qui n'a pas d'équivalent sur cette
+# page) ; sinon 2024-25. current_page : même principe que les deux autres pages. key= (pas index=
+# recalculé) pour que le choix de l'utilisateur SUR CETTE PAGE survive aux reruns suivants, même
+# principe que radar_season. Toujours la saison régulière (get_mercato_lineup ne gère que ça,
+# voir sa docstring).
+# Page NBA seulement : la saison partagée n'est lue et écrite que si le sport choisi ailleurs est
+# la NBA (ou si rien n'a encore été choisi), pour ne pas toucher au choix rugby des autres pages.
+_entering_page = st.session_state.get("current_page") != "effectifs"
+st.session_state["current_page"] = "effectifs"
+_nba_context = st.session_state.get("selected_sport", "nba") == "nba"
+_shared_season = shared_season(st.session_state, "nba", None) if _nba_context else None
 _default_season = "2024-25" if "2024-25" in sport.seasons else sport.seasons[0]
 _url_season = st.query_params.get("saison")
 if _url_season in sport.seasons:
     st.session_state["effectifs_season"] = _url_season
-elif "effectifs_season" not in st.session_state:
-    _main_season = st.session_state.get("main_season")
-    st.session_state["effectifs_season"] = _main_season if _main_season in sport.seasons else _default_season
+elif _entering_page and _shared_season in sport.seasons:
+    st.session_state["effectifs_season"] = _shared_season
+elif st.session_state.get("effectifs_season") not in sport.seasons:
+    st.session_state["effectifs_season"] = _default_season
 
 
 def _sync_season_in_url() -> None:
@@ -302,9 +311,27 @@ def _sync_season_in_url() -> None:
         st.query_params["saison"] = st.session_state["effectifs_season"]
 
 
+def _on_season_change() -> None:
+    _sync_season_in_url()
+    # Saison changée ici : elle remplace aussi un "Toutes les saisons" venu du Dashboard.
+    if st.session_state.get("selected_sport", "nba") == "nba":
+        st.session_state["selected_season"] = ("nba", None, st.session_state["effectifs_season"])
+
+
 season = st.sidebar.selectbox(
-    "Saison", options=sport.seasons, key="effectifs_season", on_change=_sync_season_in_url
+    "Saison", options=sport.seasons, key="effectifs_season", on_change=_on_season_change
 )
+if _nba_context and _shared_season != ALL_SEASONS:
+    st.session_state["selected_season"] = ("nba", None, season)
+if not _nba_context:
+    _other_sport = SPORTS.get(st.session_state.get("selected_sport"))
+    _other_choice = " · ".join(
+        [_other_sport.label] + [c.label for c in (_other_sport.competitions or [])
+                                if c.key == st.session_state.get("selected_competition")]
+    ) if _other_sport else ""
+    st.sidebar.caption(
+        f"Page NBA uniquement pour l'instant. Le Dashboard et le Radar restent sur {_other_choice}."
+    )
 
 
 # --- Vue effectif réel (?equipe=CODE) ----------------------------------------------------------
@@ -354,6 +381,11 @@ def _img_html(url: str, alt: str, box_class: str, fallback: str | None = None) -
     )
 
 
+# Manques de get_player_stats (data_sources.base.INCOMPLETE_DATA_ATTR) affichés en bandeau sur
+# cette page : seulement l'équipe du dernier match, la page n'affiche ni tirs ni fiabilité.
+EFFECTIFS_RELEVANT_GAPS = ("équipe du dernier match",)
+
+
 @st.cache_data(show_spinner="Chargement des données NBA (nba_api + Kaggle)...")
 def load_players(sport_key: str, season: str) -> pd.DataFrame:
     return SPORTS[sport_key].get_player_stats(season, force_refresh=False, period="regular")
@@ -392,6 +424,9 @@ if team_code:
         st.title("Effectifs")
         st.error(f"Impossible de charger les joueurs de {season} : {exc}")
         st.stop()
+    # Seul manque qui concerne cette page : l'équipe (tirs et fiabilité n'y sont pas affichés).
+    if (msg := incomplete_data_warning(players_df, season, relevant=EFFECTIFS_RELEVANT_GAPS)):
+        st.warning(msg)
     # Identité indisponible (ex. serveur NBA injoignable sans cache) : pas bloquant, le code
     # d'équipe sert alors de nom (le logo, lui, vient de la table locale, voir team_logo_url).
     try:
@@ -499,10 +534,11 @@ def prepare_season(sport_key: str, season: str) -> dict:
     identity = {r["team"]: (r["team_id"], r["team_name"]) for _, r in identity_df.iterrows()}
 
     players_error = None
+    incomplete_warning = None
     try:
-        players_df = sp.get_player_stats(season, force_refresh=False, period="regular")[
-            ["player_id", "player", "team"]
-        ]
+        stats_df = sp.get_player_stats(season, force_refresh=False, period="regular")
+        incomplete_warning = incomplete_data_warning(stats_df, season, relevant=EFFECTIFS_RELEVANT_GAPS)
+        players_df = stats_df[["player_id", "player", "team"]]
     except Exception as exc:
         players_error = str(exc)
         players_df = pd.DataFrame(columns=["player_id", "player", "team"])
@@ -537,6 +573,7 @@ def prepare_season(sport_key: str, season: str) -> dict:
     return {
         "empty": False,
         "players_error": players_error,
+        "incomplete_warning": incomplete_warning,
         "grid_data": {"season": season, "teams": teams, "players": players, "missing": missing,
                       "photo_team_ids": photo_team_ids},
     }
@@ -566,6 +603,8 @@ if prep["empty"]:
 
 if prep["players_error"]:
     st.warning(f"Liste complète des joueurs indisponible pour {season} : {prep['players_error']}")
+if prep["incomplete_warning"]:
+    st.warning(prep["incomplete_warning"])
 
 
 # --- Composant de la grille (HTML + JS, sans iframe) -----------------------------------------
