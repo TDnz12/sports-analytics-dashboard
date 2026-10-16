@@ -370,6 +370,21 @@ labels = [o.split(" · ")[0] for o in at.multiselect(key="radar_players").option
 assert labels == sorted(labels, key=base.sort_key)
 ok("rugby : aucun tiret cadratin ni texte NBA ou anglais (modes Indice et Centile), aide du seuil rugby, liste triée sans accents")
 
+# R11. Recherche sans accents ni casse (base.filter_options) : « gael » propose Gaël Fickou, sans
+# retirer les joueurs déjà choisis ni en ajouter (pas de sélection automatique sur le Radar).
+chosen = [r["player_uid"] for r in trio[:2]]
+at = new({"selected_sport": "rugby", "radar_players": chosen})
+box = next(t for t in at.text_input if t.label == "Rechercher un joueur")
+assert box.placeholder == "ex. gael", box.placeholder
+box.set_value("gael").run()
+ms = at.multiselect(key="radar_players")
+assert not at.exception and ms.value == chosen, ms.value
+assert any(o.startswith("Gaël Fickou") for o in ms.options), ms.options
+kept_labels = tuple(r["player_label"] for r in trio[:2])
+assert sum(o.startswith(kept_labels) for o in ms.options) == 2, ms.options
+assert all("gael" in base.search_key(o) for o in ms.options if not o.startswith(kept_labels)), ms.options
+ok("rugby : « gael » propose Gaël Fickou, joueurs déjà choisis gardés, rien d'ajouté")
+
 # R11. Données partielles : bandeau visible quand get_player_stats signale un manque (attrs).
 # SPORTS["nba"] remplacé le temps du contrôle, restauré même en cas d'échec.
 import dataclasses

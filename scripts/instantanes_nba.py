@@ -70,7 +70,8 @@ def capture(out_path: str) -> None:
     at = new(DASH); dump(at, "Dashboard par défaut")
     select(at, "Statistiques utilisées").set_value("Playoffs uniquement").run(); dump(at, "Dashboard playoffs")
     at = new(DASH); select(at, "Saison").set_value("2010-11").run(); dump(at, "Dashboard 2010-11")
-    at = new(DASH); select(at, "Rechercher un joueur").set_value("Nikola Jokić").run(); dump(at, "Dashboard recherche Jokić")
+    # Liste des joueurs : "Rechercher un joueur" avant le champ de recherche sans accents, "Joueur" après.
+    at = new(DASH); next(s for s in at.selectbox if s.label in ("Joueur", "Rechercher un joueur")).set_value("Nikola Jokić").run(); dump(at, "Dashboard recherche Jokić")
     at = new(DASH); select(at, "Saison").set_value(select(at, "Saison").options[0]).run(); dump(at, "Dashboard toutes les saisons")
     at = new(RADAR); dump(at, "Radar par défaut")
     at.multiselect(key="radar_players").set_value(FOUR).run(); dump(at, "Radar 4 joueurs")

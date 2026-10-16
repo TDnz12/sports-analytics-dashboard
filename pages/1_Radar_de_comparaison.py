@@ -30,7 +30,9 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from data_sources import SPORTS
-from data_sources.base import ALL_SEASONS, incomplete_data_warning, shared_season, sort_key
+from data_sources.base import (
+    ALL_SEASONS, filter_options, incomplete_data_warning, shared_season, sort_key,
+)
 
 st.set_page_config(page_title="Radar de comparaison · Sports Analytics", layout="wide")
 
@@ -351,9 +353,17 @@ else:
     kept = [p for p in st.session_state["radar_players"] if p in player_options]
     if kept != st.session_state["radar_players"]:
         st.session_state["radar_players"] = kept or [player_options[0]]
+# Recherche accents et casse ignorés (base.filter_options, comme le Dashboard), sur le libellé
+# complet (rugby : "Nom (Club) · Poste") ; les joueurs déjà choisis restent dans la liste.
+radar_query = st.sidebar.text_input(
+    "Rechercher un joueur", key="radar_query", live=True, placeholder=sport.search_placeholder,
+    help="Accents et majuscules ignorés. Les joueurs déjà choisis restent sélectionnés.",
+)
 players = st.sidebar.multiselect(
-    f"Joueurs (1 à {MAX_PLAYERS})", options=player_options, max_selections=MAX_PLAYERS, key="radar_players",
-    format_func=_option_label,
+    f"Joueurs (1 à {MAX_PLAYERS})",
+    options=filter_options(player_options, radar_query, label=_option_label,
+                           keep=set(st.session_state["radar_players"])),
+    max_selections=MAX_PLAYERS, key="radar_players", format_func=_option_label,
 )
 
 if preselected_player and preselected_player not in player_options:

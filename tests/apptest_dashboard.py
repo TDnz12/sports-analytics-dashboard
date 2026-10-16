@@ -146,9 +146,24 @@ assert points(at) > 300
 widget(at, "selectbox", "Statistique en ordonnée (Y)").set_value("points_per_game").run()
 ok("NBA : titre, défauts, curseurs, légende des échantillons, graduations et tableau inchangés")
 
-widget(at, "selectbox", "Rechercher un joueur").set_value("Nikola Jokić").run()
+widget(at, "selectbox", "Joueur").set_value("Nikola Jokić").run()
 assert not at.exception and widget(at, "button", "Voir le profil radar") is not None
 ok("NBA : bouton « Voir le profil radar » présent")
+
+# Recherche sans accents ni casse (base.filter_options) : un seul résultat est sélectionné directement.
+search_box = widget(at, "text_input", "Rechercher un joueur")
+assert search_box.placeholder == "ex. doncic", search_box.placeholder
+search_box.set_value("doncic").run()
+assert not at.exception and widget(at, "selectbox", "Joueur").value == "Luka Dončić"
+assert widget(at, "selectbox", "Joueur").options == ["Aucun", "Luka Dončić"]
+widget(at, "text_input", "Rechercher un joueur").set_value("").run()
+assert widget(at, "selectbox", "Joueur").value == "Luka Dončić" and len(widget(at, "selectbox", "Joueur").options) > 300
+# Joueur gardé quand la saison change s'il y existe (2023-24), sinon "Aucun" (2016-17, avant ses débuts).
+widget(at, "selectbox", "Saison").set_value("2023-24").run()
+assert not at.exception and widget(at, "selectbox", "Joueur").value == "Luka Dončić"
+widget(at, "selectbox", "Saison").set_value("2016-17").run()
+assert not at.exception and widget(at, "selectbox", "Joueur").value == "Aucun"
+ok("NBA : « doncic » sélectionne Luka Dončić ; joueur gardé ou remis à « Aucun » au changement de saison")
 
 # --- Rugby : Top 14 par défaut ----------------------------------------------------
 at = new()
@@ -264,7 +279,7 @@ pos.set_value([]).run()
 ok("Rugby : filtre par poste")
 
 # Recherche : bouton radar présent (lot 6) ; joueur à échantillon court masqué signalé
-search = widget(at, "selectbox", "Rechercher un joueur")
+search = widget(at, "selectbox", "Joueur")
 short = at.dataframe[0].value.query("Échantillon == 'court'")["Joueur"].iloc[0]
 search.set_value(short).run()
 assert not at.exception and widget(at, "button", "Voir le profil radar") is not None
@@ -273,6 +288,14 @@ search.set_value("Aucun").run()
 assert widget(at, "button", "Voir le profil radar") is None
 ok("Rugby : bouton radar présent, message pour un joueur à échantillon court masqué")
 
+search_box = widget(at, "text_input", "Rechercher un joueur")
+assert search_box.placeholder == "ex. gael", search_box.placeholder
+search_box.set_value("gael f").run()
+assert not at.exception and widget(at, "selectbox", "Joueur").value == "Gaël Fickou"
+widget(at, "text_input", "Rechercher un joueur").set_value("").run()
+widget(at, "selectbox", "Joueur").set_value("Aucun").run()
+ok("Rugby : « gael f » sélectionne Gaël Fickou")
+
 # Bouton radar : dépose sport, compétition, saison, période et identifiant du joueur
 _r = rugby_stats("2025-26", competition="top14")
 _target = _r[_r["position_group"] == "Ailier"].sort_values("minutes_total").iloc[-1]
@@ -280,7 +303,7 @@ radar_at = AppTest.from_file(PAGE, default_timeout=300)
 radar_at.session_state["selected_sport"] = "rugby"
 radar_at.run()
 assert not radar_at.exception, radar_at.exception
-widget(radar_at, "selectbox", "Rechercher un joueur").set_value(_target["player_label"]).run()
+widget(radar_at, "selectbox", "Joueur").set_value(_target["player_label"]).run()
 # AppTest ne suit pas st.switch_page vers un fichier de pages/ : neutralisé le temps du clic, puis
 # la page Radar est ouverte avec les clés déposées par le callback.
 import streamlit as _st

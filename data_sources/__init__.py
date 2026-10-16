@@ -119,6 +119,8 @@ class SportConfig:
     show_low_sample_default: Optional[bool] = None
     # Colonne du nom affiché et recherché (homonymes : "Nom (Club)") ; None = "player".
     player_label_col: Optional[str] = None
+    # Exemple affiché dans le champ "Rechercher un joueur" (Dashboard et Radar) ; None = vide.
+    search_placeholder: Optional[str] = None
     # Colonnes catégorielles proposées dans "Colorer selon", {colonne : libellé} ; None = équipe.
     categorical_colors: Optional[dict] = None
     # Couleurs fixes de ces colonnes, {colonne : {valeur : couleur}}, dans l'ordre de la légende ;
@@ -193,6 +195,7 @@ NBA = SportConfig(
     # PIE : 3e dimension analytique (impact global du joueur) en dégradé continu, plus lisible
     # qu'un nuage à 30 couleurs par équipe.
     default_color="pie",
+    search_placeholder="ex. doncic",
 )
 
 # Rugby : performance uniquement, sans salaires. Top 14 et Pro D2 livrés (lot 4), Six Nations
@@ -219,6 +222,7 @@ RUGBY = SportConfig(
     low_sample_label=rugby.LOW_SAMPLE_LABEL,
     show_low_sample_default=False,
     player_label_col="player_label",
+    search_placeholder="ex. gael",
     categorical_colors={
         "position_family": "Famille de poste (avants / arrières)",
         "position_group": "Poste",

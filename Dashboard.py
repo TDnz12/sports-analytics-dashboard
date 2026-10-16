@@ -16,7 +16,9 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from data_sources import SPORTS
-from data_sources.base import ALL_SEASONS, incomplete_data_warning, shared_season, sort_key
+from data_sources.base import (
+    ALL_SEASONS, filter_options, incomplete_data_warning, shared_season, sort_key,
+)
 
 st.set_page_config(page_title="Sports Analytics Dashboard", layout="wide")
 
@@ -464,11 +466,27 @@ size_key = st.sidebar.selectbox(
 st.sidebar.markdown("---")
 # Tri alphabétique sans accents ni casse (data_sources.base.sort_key).
 player_options = ["Aucun"] + sorted(df[label_col].dropna().unique().tolist(), key=sort_key)
+# Le filtre intégré des listes Streamlit ne fait que des minuscules (« gael » ne trouve pas
+# « Gaël ») : ce champ filtre la liste, accents et casse ignorés (base.filter_options). Un seul
+# résultat, à la saisie : sélectionné directement. Joueur gardé quand la saison change s'il y
+# existe, sinon "Aucun".
+player_query = st.sidebar.text_input(
+    "Rechercher un joueur", key="player_query", live=True, placeholder=sport.search_placeholder,
+    help="Accents et majuscules ignorés. Un seul résultat est sélectionné directement.",
+)
+if st.session_state.get("searched_player") not in player_options:
+    st.session_state["searched_player"] = "Aucun"
+# Résultats de la recherche seule : le joueur déjà sélectionné, gardé dans la liste, n'en fait pas
+# partie (sinon il bloquerait la sélection directe d'un autre joueur).
+_matches = filter_options(player_options[1:], player_query) if player_query.strip() else []
+if player_query != st.session_state.get("_player_query_last") and len(_matches) == 1:
+    st.session_state["searched_player"] = _matches[0]
+st.session_state["_player_query_last"] = player_query
+shown_players = filter_options(player_options, player_query,
+                               keep={"Aucun", st.session_state["searched_player"]})
 searched_player = st.sidebar.selectbox(
-    "Rechercher un joueur",
-    options=player_options,
-    index=0,
-    help="Tape un nom pour filtrer la liste. Le joueur sélectionné est entouré sur le graph.",
+    "Joueur", options=shown_players, key="searched_player",
+    help="Le joueur sélectionné est entouré sur le graph.",
 )
 
 def _handle_radar_click(player_key) -> None:

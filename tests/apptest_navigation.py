@@ -228,7 +228,7 @@ try:
                 select(s.at, "Statistiques utilisées", period)
             # Joueur qui a le plus de minutes : il a forcément un radar (rugby : poste déterminé).
             name = top_player(sport_key, competition, season, period)
-            select(s.at, "Rechercher un joueur", name)
+            select(s.at, "Joueur", name)
             switched.clear()
             next(b for b in s.at.button if b.label == "Voir le profil radar").click().run()
             assert not s.at.exception, s.at.exception
