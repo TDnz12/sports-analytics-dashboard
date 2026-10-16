@@ -21,6 +21,10 @@ Dashboard interactif de stats de joueurs, construit avec Streamlit, pour deux sp
 - Radar de comparaison par poste, jusqu'à 4 joueurs, avec des axes choisis selon leur fiabilité
 - La page Effectifs n'existe que pour la NBA
 
+### Recherche de joueurs
+
+Sur le Dashboard et le Radar, une seule case sert à chercher et à choisir les joueurs. La liste se filtre dans le navigateur à chaque lettre, sans recharger la page, en ignorant accents et majuscules, mots dans n'importe quel ordre : « gael », « fickou gael » et « doncic » trouvent Gaël Fickou et Luka Dončić. Flèches, Entrée et Échap au clavier. Sur le Dashboard, un joueur (croix pour le désélectionner) ; sur le Radar, jusqu'à 4 joueurs en pastilles. En rugby, chaque joueur apparaît sous la forme « Nom · Poste », avec le club entre parenthèses pour les homonymes.
+
 Les règles de calcul (minutes, postes, seuils, radar) sont détaillées dans la partie rugby de [METHODOLOGY.md](METHODOLOGY.md).
 
 ## Page Effectifs (NBA uniquement)
@@ -108,7 +112,7 @@ C'est aussi la seule façon de mettre à jour les données : l'application en li
 .venv/bin/python tests/apptest_radar.py               # Radar de comparaison
 .venv/bin/python tests/apptest_navigation.py          # navigation entre les 3 pages
 .venv/bin/python tests/apptest_effectifs.py           # page Effectifs (~1 min)
-cd tests/js && npm install && npm test                 # JavaScript de la grille Effectifs (node + jsdom)
+cd tests/js && npm install && npm test                 # JavaScript de la grille Effectifs et de la recherche de joueurs (node + jsdom)
 ```
 
 Les tests Python et AppTest lisent les données en cache dans `data_cache/` sans jamais les modifier. Les tests JavaScript testent directement le code de la grille tel qu'il est dans `pages/2_Effectifs.py`.
@@ -129,6 +133,7 @@ Dashboard.py                 # UI Streamlit, ne connaît que data_sources.SPORTS
 pages/
   1_Radar_de_comparaison.py
   2_Effectifs.py              # grille des compositions + effectif réel (NBA)
+player_picker/                # recherche de joueurs (composant maison, JS et CSS) du Dashboard et du Radar
 data_sources/
   base.py                     # schéma commun, cache parquet
   radar_common.py             # moteur du radar commun aux sports (z-score, centile, padding)

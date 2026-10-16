@@ -31,8 +31,9 @@ import streamlit as st
 
 from data_sources import SPORTS
 from data_sources.base import (
-    ALL_SEASONS, filter_options, incomplete_data_warning, shared_season, sort_key,
+    ALL_SEASONS, incomplete_data_warning, shared_season, sort_key,
 )
+from player_picker import player_picker
 
 st.set_page_config(page_title="Radar de comparaison · Sports Analytics", layout="wide")
 
@@ -317,12 +318,11 @@ player_options = sorted(eligible[key_col].dropna().unique().tolist(), key=lambda
 
 
 # Libellé d'un joueur dans la liste : son nom, et son poste quand le sport a un identifiant
-# distinct du nom (rugby : "Nom (Club) · Deuxième ligne, poste mixte (aussi : Troisième ligne aile
-# 38 %)", colonne position_list_label ; sinon position_label).
-if key_col != label_col and "position_label" in df.columns:
-    _position_col = "position_list_label" if "position_list_label" in df.columns else "position_label"
-    _position_labels = df.drop_duplicates(key_col).set_index(key_col)[_position_col]
-    option_labels = {k: f"{labels[k]} · {_position_labels[k]}" for k in player_options}
+# distinct du nom (rugby : "Nom · Poste", club entre parenthèses pour les seuls homonymes). Poste
+# seul : le détail (banc, poste mixte, postes secondaires) est sur la carte du joueur.
+if key_col != label_col and "position_group" in df.columns:
+    _positions = df.drop_duplicates(key_col).set_index(key_col)["position_group"]
+    option_labels = {k: f"{labels[k]} · {_positions[k]}" for k in player_options}
 else:
     option_labels = {}
 
@@ -337,14 +337,13 @@ if not player_options:
 
 MAX_PLAYERS = 4
 
-# Même raison que pour "Saison" ci-dessus (key= plutôt qu'index= recalculé à chaque run) --
-# avec en plus une validité à revérifier à CHAQUE run (pas seulement à la création) : changer de
-# saison/période change player_options, et un joueur déjà sélectionné peut ne plus en faire
-# partie (absent de la nouvelle saison/période) -- st.multiselect lève une erreur si une valeur
-# de key= n'est pas dans options, d'où ce filtrage explicite. Repli sur le premier joueur
-# seulement si le filtrage a tout retiré : une sélection vidée à la main par l'utilisateur reste
-# vide (message plus bas), sinon le joueur retiré reviendrait aussitôt. Une présélection du
-# Dashboard remplace la sélection en cours (changement de sport compris).
+# Sélection dans st.session_state["radar_players"], envoyée à la liste de recherche (player_picker)
+# à chaque run. Validité revérifiée à CHAQUE run : changer de saison/période change
+# player_options, et un joueur déjà sélectionné peut ne plus en faire partie (absent de la nouvelle
+# saison/période). Repli sur le premier joueur seulement si le filtrage a tout retiré : une
+# sélection vidée à la main par l'utilisateur reste vide (message plus bas), sinon le joueur
+# retiré reviendrait aussitôt. Une présélection du Dashboard remplace la sélection en cours
+# (changement de sport compris).
 if preselected_player in player_options:
     st.session_state["radar_players"] = [preselected_player]
 elif "radar_players" not in st.session_state:
@@ -353,18 +352,22 @@ else:
     kept = [p for p in st.session_state["radar_players"] if p in player_options]
     if kept != st.session_state["radar_players"]:
         st.session_state["radar_players"] = kept or [player_options[0]]
-# Recherche accents et casse ignorés (base.filter_options, comme le Dashboard), sur le libellé
-# complet (rugby : "Nom (Club) · Poste") ; les joueurs déjà choisis restent dans la liste.
-radar_query = st.sidebar.text_input(
-    "Rechercher un joueur", key="radar_query", live=True, placeholder=sport.search_placeholder,
-    help="Accents et majuscules ignorés. Les joueurs déjà choisis restent sélectionnés.",
-)
-players = st.sidebar.multiselect(
-    f"Joueurs (1 à {MAX_PLAYERS})",
-    options=filter_options(player_options, radar_query, label=_option_label,
-                           keep=set(st.session_state["radar_players"])),
-    max_selections=MAX_PLAYERS, key="radar_players", format_func=_option_label,
-)
+# Une seule case (player_picker, composant maison, comme le Dashboard) : joueurs choisis en
+# pastilles avec croix, recherche dans le navigateur sans accents ni casse sur le libellé complet
+# (rugby : "Nom (Club) · Poste"), MAX_PLAYERS au plus (au-delà, message et ajout refusé).
+
+
+def _set_radar_players(picked: list) -> None:
+    st.session_state["radar_players"] = picked
+
+
+with st.sidebar:
+    player_picker(
+        player_options, st.session_state["radar_players"], _set_radar_players, key="radar_picker",
+        label=f"Joueurs (1 à {MAX_PLAYERS})", max_selected=MAX_PLAYERS,
+        placeholder=sport.search_placeholder, label_of=_option_label,
+    )
+players = st.session_state["radar_players"]
 
 if preselected_player and preselected_player not in player_options:
     _no_position = (

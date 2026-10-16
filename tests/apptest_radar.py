@@ -17,10 +17,22 @@ import data_sources.nba as nba, data_sources.base as base
 writes = []
 nba.write_cache = base.write_cache = lambda df, path, **k: writes.append(str(path))
 from streamlit.testing.v1 import AppTest
+from tests.pilote_picker import choisir, data as picker_data
 
 PAGE = str(ROOT / "pages" / "1_Radar_de_comparaison.py")
 ok = lambda name: print("ok -", name)
 FOUR = ["Shai Gilgeous-Alexander", "Luka Dončić", "Nikola Jokić", "Victor Wembanyama"]
+
+
+PLAYERS = "Joueurs (1 à 4)"  # étiquette de la liste de recherche de joueurs (player_picker)
+
+
+def shown(at):  # joueurs affichés dans la liste de recherche (sélection envoyée par Python)
+    return picker_data(at, PLAYERS)["selected"]
+
+
+def labels_of(at):  # libellés des joueurs proposés par la liste de recherche
+    return [label for _, label in picker_data(at, PLAYERS)["options"]]
 
 
 def new(state=None):
@@ -49,8 +61,7 @@ def spec(at):
 # 1. Ouverture par défaut : un joueur, saison 2024-25
 at = new()
 assert not at.exception, at.exception
-ms = at.multiselect(key="radar_players")
-assert at.selectbox(key="radar_season").value == "2024-25" and len(ms.value) == 1
+assert at.selectbox(key="radar_season").value == "2024-25" and len(shown(at)) == 1
 assert len(traces(at)) == 1 and len(traces(at, "legende")) == 1 and len(cards(at)) == 1
 assert at.title[0].value == "Radar de comparaison · NBA · 2024-25", at.title[0].value
 assert "borné à ±3 écarts-types" in at.radio[0].help and "clipp" not in at.radio[0].help
@@ -58,7 +69,7 @@ assert any("(borné à ±3 écarts-types)" in c.value for c in at.caption)
 ok("ouverture : un joueur, une carte, un tracé, titre « · NBA · », « borné » dans l'aide et la légende")
 
 # 2. Quatre joueurs : couleurs distinctes, remplissage transparent, valeurs au survol seulement
-ms.set_value(FOUR).run()
+choisir(at, PLAYERS, FOUR)
 assert not at.exception, at.exception
 data = traces(at)
 assert [t["name"] for t in data] == FOUR
@@ -107,10 +118,12 @@ assert all(v.endswith("\u2007\u00A0") for label in data[0]["theta"] for v in rec
     "marge de fin de cellule absente"
 ok("tableau récap : colonnes d'axes ajustées au contenu avec marge de fin, Joueur épinglée")
 
-# 4. Limite à 4 joueurs : dans le navigateur, le widget bloque le 5e choix ; AppTest, qui force la
-# valeur, reçoit l'erreur de max_selections de Streamlit.
-ms.set_value(FOUR + ["LeBron James"]).run()
-assert at.exception and "max_selections" in at.exception[0].message, at.exception
+# 4. Limite à 4 joueurs : dans le navigateur, la liste refuse le 5e choix avec un message
+# (tests/js/test_picker.mjs) ; une valeur forcée à 5 est ramenée à 4 côté Python.
+assert picker_data(at, PLAYERS)["max"] == 4
+assert picker_data(at, PLAYERS)["texts"]["full"] == "4 joueurs au maximum : retire un joueur pour en ajouter un."
+choisir(at, PLAYERS, FOUR + ["LeBron James"])
+assert at.session_state["radar_players"] == FOUR
 ok("5e joueur refusé")
 
 # 5. Deux joueurs : valeurs écrites à côté des points, décalées haut/bas
@@ -122,30 +135,32 @@ ok("2 joueurs : valeurs affichées, décalées haut/bas")
 
 # 6. Sélection vidée à la main : message, pas de repli automatique
 at = new({"radar_players": FOUR[:2]})
-at.multiselect(key="radar_players").set_value([]).run()
-assert not at.exception and at.multiselect(key="radar_players").value == []
+choisir(at, PLAYERS, [])
+assert at.session_state["radar_players"] == []
+at.run()
+assert shown(at) == []
 assert any("au moins un joueur" in w.value for w in at.warning)
 ok("sélection vide : message, sélection laissée vide")
 
 # 7. Changement de saison : joueurs absents retirés, repli si tout disparaît
 at = new({"radar_players": ["Victor Wembanyama", "LeBron James"]})
 at.selectbox(key="radar_season").set_value("2022-23").run()
-assert not at.exception and at.multiselect(key="radar_players").value == ["LeBron James"]
+assert not at.exception and shown(at) == ["LeBron James"]
 at.selectbox(key="radar_season").set_value("2002-03").run()
-assert not at.exception and len(at.multiselect(key="radar_players").value) == 1
+assert not at.exception and len(shown(at)) == 1
 ok("changement de saison : joueurs absents retirés, repli sur un joueur si besoin")
 
 # 8. Présélection depuis le Dashboard
 at = new({"radar_preselect_player": "Nikola Jokić", "radar_preselect_season": "2023-24"})
 assert at.selectbox(key="radar_season").value == "2023-24"
-assert at.multiselect(key="radar_players").value == ["Nikola Jokić"]
+assert shown(at) == ["Nikola Jokić"]
 ok("présélection du Dashboard : saison et joueur repris")
 
 # 9. Playoffs
 at = new({"radar_players": FOUR})
 next(s for s in at.selectbox if s.label == "Statistiques utilisées").set_value("Playoffs uniquement").run()
 assert not at.exception, at.exception
-assert set(at.multiselect(key="radar_players").value) <= set(FOUR) and len(traces(at, "legende")) >= 1
+assert set(shown(at)) <= set(FOUR) and len(traces(at, "legende")) >= 1
 ok("playoffs : joueurs non qualifiés retirés, radar affiché")
 
 # 10. Axe sans tentative (Rudy Gobert, 0 tir à 3 points en 2024-25) : point absent du tracé (pas
@@ -240,16 +255,20 @@ at = new({"selected_sport": "rugby"})
 assert select(at, "Compétition").value == "top14"
 ok("sport et compétition repris du Dashboard (Pro D2), NBA sans choix du Dashboard")
 
-# R2. Liste des joueurs : identifiants, nom et poste affichés, sans Indéterminé, (banc) compris
+# R2. Liste des joueurs : identifiants, « Nom · Poste » seulement (club entre parenthèses pour les
+# seuls homonymes, déjà dans player_label), sans Indéterminé, remplaçants (banc) compris
 df_r = rugby_radar.compute_radar_scores(rugby_stats("2025-26", competition="top14"))
-ms = at.multiselect(key="radar_players")
-assert all(v.startswith("icw:") for v in ms.value)
+assert all(v.startswith("icw:") for v in shown(at))
 und = df_r[(df_r["position_group"] == "Indéterminé") & (df_r["games_played"] > 0)]
-assert len(und) > 0 and not any(o.endswith(" · Indéterminé") for o in ms.options)
-assert any(o.endswith(" (banc)") for o in ms.options)
-assert len(ms.options) == ((df_r["games_played"] > 0) & df_r["radar_eligible"]).sum()
+assert len(und) > 0 and not any(o.endswith(" · Indéterminé") for o in labels_of(at))
+expected = {r["player_uid"]: f"{r['player_label']} · {r['position_group']}" for _, r in df_r.iterrows()}
+assert all(expected[k] == label for k, label in picker_data(at, PLAYERS)["options"])
+assert not [o for o in labels_of(at) if re.search(r"\(banc\)|poste mixte|aussi|%", o)]
+bench_uid = df_r[(df_r["position_source"] == "banc") & df_r["radar_eligible"] & (df_r["games_played"] > 0)]["player_uid"]
+assert len(bench_uid) > 0 and set(bench_uid) <= {k for k, _ in picker_data(at, PLAYERS)["options"]}
+assert len(labels_of(at)) == ((df_r["games_played"] > 0) & df_r["radar_eligible"]).sum()
 assert any(f"{len(und)} joueurs sans poste déterminé" in c.value for c in at.caption)
-ok(f"liste rugby par identifiant, « Nom · Poste », {len(und)} Indéterminé exclus et signalés, (banc) proposés")
+ok(f"liste rugby par identifiant, « Nom · Poste » seulement, {len(und)} Indéterminé exclus et signalés, remplaçants (banc) proposés")
 
 
 def best(pos):  # titulaire du poste avec le plus de minutes
@@ -258,7 +277,7 @@ def best(pos):  # titulaire du poste avec le plus de minutes
 
 # R3. Pilier, Ailier, Arrière : intersection à 5 axes, notes, colonnes hors radar, cartes
 trio = [best(p) for p in ("Pilier", "Ailier", "Arrière")]
-ms.set_value([r["player_uid"] for r in trio]).run()
+choisir(at, PLAYERS, [r["player_uid"] for r in trio])
 assert not at.exception, at.exception
 cat = spec(at)["layout"]["polar"]["angularaxis"]["categoryarray"]
 assert cat == ["Plaquages", "Mètres", "% gain de ligne", "Courses", "Défenseurs battus"], cat
@@ -283,24 +302,24 @@ assert "Essais : " in card and "% au pied : " in card and "Cartons : " in card
 assert "titularisation" in card and ">Pilier" in card
 ok("Pilier, Ailier, Arrière : 5 axes communs, axes retirés au tableau, hors radar, cartes")
 
-# R3 bis. Poste mixte (sous 60 % des titularisations au poste principal) et postes secondaires dans
-# la liste et la carte ; clubs sur la carte d'un joueur passé par deux clubs (décisions B.1 et B.2).
-labels = {o for o in ms.options}
-assert "Charles Ollivon · Troisième ligne centre, poste mixte (aussi : Deuxième ligne 38 %, " \
-       "Troisième ligne aile 12 %)" in labels
-assert "Paul Boudehent · Deuxième ligne (aussi : Troisième ligne aile 38 %)" in labels   # 62 % : pas mixte
+# R3 bis. Poste mixte (sous 60 % des titularisations au poste principal) et postes secondaires sur
+# la carte, pas dans la liste (« Nom · Poste ») ; clubs sur la carte d'un joueur passé par deux
+# clubs (décisions B.1 et B.2).
+labels = set(labels_of(at))
+assert "Charles Ollivon · Troisième ligne centre" in labels
+assert "Paul Boudehent · Deuxième ligne" in labels   # 62 % : pas mixte
 uid = {r["player"]: r["player_uid"] for _, r in df_r.iterrows()}
-ms.set_value([uid["Charles Ollivon"], uid["Jonny Gray"]]).run()
+choisir(at, PLAYERS, [uid["Charles Ollivon"], uid["Jonny Gray"]])
 assert not at.exception, at.exception
 ollivon, gray = [m.value for m in at.markdown if "border-left: 4px solid" in m.value]
 assert ">Troisième ligne centre, poste mixte (aussi : Deuxième ligne 38 %, Troisième ligne aile 12 %)<" in ollivon, ollivon
 assert ">Clubs : Bordeaux-Bègles (10), Perpignan (4)<" in gray and "Clubs" not in ollivon, gray
-ok("poste mixte et postes secondaires dans la liste et la carte (Ollivon), Boudehent à 62 % sans badge, clubs de Gray")
+ok("poste mixte et postes secondaires sur la carte (Ollivon), « Nom · Poste » dans la liste, clubs de Gray")
 
 # R4. NC : % plaquages sous 25 tentatives (hors arrières, qui n'ont pas l'axe)
 nc = df_r[df_r["radar_eligible"] & (df_r["tackle_attempts"].between(1, 24))
           & (df_r["position_group"] != "Arrière")].iloc[0]
-ms.set_value([nc["player_uid"]]).run()
+choisir(at, PLAYERS, [nc["player_uid"]])
 assert not at.exception, at.exception
 (circle,) = traces(at, "sans_tentative")
 reasons = dict(zip(circle["theta"], circle["customdata"]))
@@ -312,7 +331,7 @@ ok(f"NC : {nc['player_label']} ({nc['tackle_attempts']:.0f} plaquages tentés), 
 
 # R5. Joueur (banc) : radar, mention dans la carte
 bench = df_r[df_r["position_source"] == "banc"].sort_values("minutes_total").iloc[-1]
-ms.set_value([bench["player_uid"]]).run()
+choisir(at, PLAYERS, [bench["player_uid"]])
 assert not at.exception and len(traces(at)) == 1
 assert "poste déduit du maillot de banc" in next(m.value for m in at.markdown if "border-left" in m.value)
 ok(f"(banc) : radar de {bench['player_label']}, poste déduit du maillot de banc")
@@ -327,7 +346,7 @@ assert not at.exception, at.exception
 assert (select(at, "Sport").value, select(at, "Compétition").value, select(at, "Saison").value) == \
     ("rugby", "top14", "2023-24")
 assert select(at, "Statistiques utilisées").value == "Phase régulière"
-assert at.multiselect(key="radar_players").value == [target["player_uid"]]
+assert shown(at) == [target["player_uid"]]
 ok(f"présélection rugby : {target['player_label']}, Top 14 2023-24, phase régulière")
 
 # R7. Présélection d'un Indéterminé : message, pas de radar pour lui
@@ -335,7 +354,7 @@ u = und.iloc[0]
 at = new({"radar_preselect_player": u["player_uid"], "radar_preselect_label": u["player_label"],
           "radar_preselect_sport": "rugby", "radar_preselect_competition": "top14",
           "radar_preselect_season": "2025-26", "radar_preselect_period": "all"})
-assert not at.exception and u["player_uid"] not in at.multiselect(key="radar_players").value
+assert not at.exception and u["player_uid"] not in shown(at)
 assert any("n'a pas de poste déterminé" in i.value and u["player_label"] in i.value for i in at.info)
 ok("présélection d'un Indéterminé : message « pas de poste déterminé »")
 
@@ -343,7 +362,7 @@ ok("présélection d'un Indéterminé : message « pas de poste déterminé »")
 select(at, "Sport").set_value("nba").run()
 assert not at.exception, at.exception
 assert select(at, "Saison").value == "2024-25" and at.title[0].value == "Radar de comparaison · NBA · 2024-25"
-assert len(at.multiselect(key="radar_players").value) == 1 and len(traces(at)) == 1
+assert len(shown(at)) == 1 and len(traces(at)) == 1
 ok("rugby puis NBA : saison 2024-25 et joueur NBA, sans erreur")
 
 # R9. Six Nations « bientôt disponible », sport sans radar
@@ -366,26 +385,35 @@ for mode in ("Indice", "Centile"):
     texts = all_texts(at) + [at.radio[0].help]
     bad = [t for t in texts if re.search(r"garbage|clipp|-- |Offloads", t)]
     assert not at.exception and not bad, bad
-labels = [o.split(" · ")[0] for o in at.multiselect(key="radar_players").options]
+labels = [o.split(" · ")[0] for o in labels_of(at)]
 assert labels == sorted(labels, key=base.sort_key)
 ok("rugby : aucun tiret cadratin ni texte NBA ou anglais (modes Indice et Centile), aide du seuil rugby, liste triée sans accents")
 
-# R11. Recherche sans accents ni casse (base.filter_options) : « gael » propose Gaël Fickou, sans
-# retirer les joueurs déjà choisis ni en ajouter (pas de sélection automatique sur le Radar).
+# R11. Liste de recherche (player_picker) : placeholder du sport, joueurs proposés avec leur
+# libellé complet, ajout sans retirer les autres. Recherche, clavier, limite et « taper ne touche
+# pas à la sélection » : tests/js/test_picker.mjs.
 chosen = [r["player_uid"] for r in trio[:2]]
 at = new({"selected_sport": "rugby", "radar_players": chosen})
-box = next(t for t in at.text_input if t.label == "Rechercher un joueur")
-assert box.placeholder == "ex. gael", box.placeholder
-box.set_value("gael").run()
-ms = at.multiselect(key="radar_players")
-assert not at.exception and ms.value == chosen, ms.value
-assert any(o.startswith("Gaël Fickou") for o in ms.options), ms.options
-kept_labels = tuple(r["player_label"] for r in trio[:2])
-assert sum(o.startswith(kept_labels) for o in ms.options) == 2, ms.options
-assert all("gael" in base.search_key(o) for o in ms.options if not o.startswith(kept_labels)), ms.options
-ok("rugby : « gael » propose Gaël Fickou, joueurs déjà choisis gardés, rien d'ajouté")
+d = picker_data(at, PLAYERS)
+assert d["placeholder"] == "ex. gael" and d["selected"] == chosen and d["max"] == 4, d
+assert d["texts"]["empty"] == "Aucun joueur trouvé"
+fickou = next(k for k, label in d["options"] if label.startswith("Gaël Fickou"))
+choisir(at, PLAYERS, chosen + [fickou])
+assert at.session_state["radar_players"] == chosen + [fickou] and len(traces(at)) == 3
+assert shown(at) == chosen + [fickou]  # sélection à jour dès le run du choix (run relancé)
+choisir(at, PLAYERS, chosen)  # croix de Gaël Fickou
+assert shown(at) == chosen and len(traces(at)) == 2
+ok("rugby : placeholder « ex. gael », Gaël Fickou proposé et ajouté sans retirer les autres")
 
-# R11. Données partielles : bandeau visible quand get_player_stats signale un manque (attrs).
+# R12. NBA : placeholder « ex. doncic », Luka Dončić proposé et ajouté.
+at = new({"radar_players": FOUR[:1]})
+d = picker_data(at, PLAYERS)
+assert d["placeholder"] == "ex. doncic" and ["Luka Dončić", "Luka Dončić"] in d["options"]
+choisir(at, PLAYERS, FOUR[:1] + ["Luka Dončić"])
+assert at.session_state["radar_players"] == ["Shai Gilgeous-Alexander", "Luka Dončić"]
+ok("NBA : placeholder « ex. doncic », Luka Dončić ajouté")
+
+# R13. Données partielles : bandeau visible quand get_player_stats signale un manque (attrs).
 # SPORTS["nba"] remplacé le temps du contrôle, restauré même en cas d'échec.
 import dataclasses
 import streamlit as st

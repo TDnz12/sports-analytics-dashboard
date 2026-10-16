@@ -98,11 +98,10 @@ class ClubsEtPostesTest(unittest.TestCase):
     def test_poste_mixte_sous_60_pourcent(self):
         o = player(self.df, OLLIVON)                     # n° 8 la moitié de ses titularisations
         self.assertTrue(o["mixed_position"])
-        self.assertEqual(o["position_list_label"], "Troisième ligne centre, poste mixte "
-                         "(aussi : Deuxième ligne 38 %, Troisième ligne aile 12 %)")
+        self.assertEqual(o["secondary_positions"], "Deuxième ligne 38 %, Troisième ligne aile 12 %")
         b = player(self.df, BOUDEHENT)                   # 8 sur 13 en deuxième ligne : 62 %
         self.assertFalse(b["mixed_position"])
-        self.assertEqual(b["position_list_label"], "Deuxième ligne (aussi : Troisième ligne aile 38 %)")
+        self.assertEqual(b["secondary_positions"], "Troisième ligne aile 38 %")
         mixed = self.df[self.df["mixed_position"]]
         self.assertTrue((mixed["position_share"] < 0.6).all())
         self.assertTrue((mixed["position_source"] == "titulaire").all())

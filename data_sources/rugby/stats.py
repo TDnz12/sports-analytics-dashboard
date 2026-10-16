@@ -15,8 +15,7 @@ colonnes d'affichage calculées à la lecture (pas stockées dans le cache) :
 - clubs : "Bordeaux-Bègles (10), Perpignan (4)" (matchs joués, ordre chronologique) pour un joueur
   passé par plusieurs clubs dans la saison, sinon vide ; club_names : tuple des clubs où il a joué
   (filtre équipe du Dashboard : il apparaît dans chacun) ;
-- mixed_position : poste principal sous 60 % des titularisations (positions.MIXED_POSITION_SHARE) ;
-  position_list_label : poste, "poste mixte" et postes secondaires (liste du radar).
+- mixed_position : poste principal sous 60 % des titularisations (positions.MIXED_POSITION_SHARE).
 """
 
 from __future__ import annotations
@@ -161,11 +160,6 @@ def get_player_stats(season: str, force_refresh: bool = False, period: str = "al
     df["clubs"] = named.map(lambda d: ", ".join(f"{name} ({n})" for name, n in d) if len(d) > 1 else None)
     df["mixed_position"] = ((df["position_source"] == SOURCE_STARTER)
                             & (df["position_share"] < MIXED_POSITION_SHARE))
-    secondary = df["secondary_positions"].where(df["secondary_positions"].notna(), None)
-    df["position_list_label"] = [
-        label + (", poste mixte" if mixed else "") + (f" (aussi : {sec})" if isinstance(sec, str) and sec else "")
-        for label, mixed, sec in zip(df["position_label"], df["mixed_position"], secondary)
-    ]
     return df
 
 

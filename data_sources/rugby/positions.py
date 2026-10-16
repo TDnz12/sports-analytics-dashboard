@@ -38,8 +38,8 @@ BENCH_FALLBACK = {16: HOOKER, 17: PROP, 18: PROP}
 SOURCE_STARTER, SOURCE_BENCH = "titulaire", "banc"
 POSITION_COLUMNS = ["player_uid", "position_group", "position_family", "position_source",
                     "secondary_positions", "position_detail", "position_share"]
-# Poste principal sous 60 % des titularisations : "poste mixte" (décision B.1 de l'audit ; 20 à 36
-# joueurs par saison parmi les titulaires d'au moins 5 matchs).
+# Poste principal sous 60 % des titularisations : "poste mixte" (décision B.1 de l'audit ; 18 à 28
+# joueurs par saison en Top 14 et 19 à 33 en Pro D2, parmi les joueurs d'au moins 5 titularisations).
 MIXED_POSITION_SHARE = 0.6
 
 

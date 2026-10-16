@@ -17,8 +17,9 @@ import streamlit as st
 
 from data_sources import SPORTS
 from data_sources.base import (
-    ALL_SEASONS, filter_options, incomplete_data_warning, shared_season, sort_key,
+    ALL_SEASONS, incomplete_data_warning, shared_season, sort_key,
 )
+from player_picker import player_picker
 
 st.set_page_config(page_title="Sports Analytics Dashboard", layout="wide")
 
@@ -466,28 +467,37 @@ size_key = st.sidebar.selectbox(
 st.sidebar.markdown("---")
 # Tri alphabétique sans accents ni casse (data_sources.base.sort_key).
 player_options = ["Aucun"] + sorted(df[label_col].dropna().unique().tolist(), key=sort_key)
-# Le filtre intégré des listes Streamlit ne fait que des minuscules (« gael » ne trouve pas
-# « Gaël ») : ce champ filtre la liste, accents et casse ignorés (base.filter_options). Un seul
-# résultat, à la saisie : sélectionné directement. Joueur gardé quand la saison change s'il y
-# existe, sinon "Aucun".
-player_query = st.sidebar.text_input(
-    "Rechercher un joueur", key="player_query", live=True, placeholder=sport.search_placeholder,
-    help="Accents et majuscules ignorés. Un seul résultat est sélectionné directement.",
-)
+# Recherche d'un joueur : une seule case (player_picker, composant maison), recherche dans le
+# navigateur sans accents ni casse, croix pour désélectionner. Le joueur choisi est gardé quand la
+# saison change s'il y existe, sinon "Aucun".
 if st.session_state.get("searched_player") not in player_options:
     st.session_state["searched_player"] = "Aucun"
-# Résultats de la recherche seule : le joueur déjà sélectionné, gardé dans la liste, n'en fait pas
-# partie (sinon il bloquerait la sélection directe d'un autre joueur).
-_matches = filter_options(player_options[1:], player_query) if player_query.strip() else []
-if player_query != st.session_state.get("_player_query_last") and len(_matches) == 1:
-    st.session_state["searched_player"] = _matches[0]
-st.session_state["_player_query_last"] = player_query
-shown_players = filter_options(player_options, player_query,
-                               keep={"Aucun", st.session_state["searched_player"]})
-searched_player = st.sidebar.selectbox(
-    "Joueur", options=shown_players, key="searched_player",
-    help="Le joueur sélectionné est entouré sur le graph.",
-)
+
+
+def _set_searched_player(picked: list) -> None:
+    st.session_state["searched_player"] = picked[0] if picked else "Aucun"
+
+
+# Libellé dans la liste : le nom, et le poste quand le sport a un identifiant distinct du nom
+# (rugby : "Nom · Poste", club entre parenthèses pour les seuls homonymes, comme le Radar ; le
+# détail est dans l'infobulle). Toutes les saisons : poste de la saison la plus récente.
+if sport.player_key_col and "position_group" in df.columns:
+    _positions = (df.sort_values("season").drop_duplicates(label_col, keep="last")
+                  .set_index(label_col)["position_group"])
+
+    def _player_list_label(name) -> str:
+        return f"{name} · {_positions[name]}"
+else:
+    _player_list_label = str
+with st.sidebar:
+    player_picker(
+        player_options[1:],
+        [] if st.session_state["searched_player"] == "Aucun" else [st.session_state["searched_player"]],
+        _set_searched_player, key="player_picker", label="Rechercher un joueur", max_selected=1,
+        placeholder=sport.search_placeholder, label_of=_player_list_label,
+    )
+searched_player = st.session_state["searched_player"]
+
 
 def _handle_radar_click(player_key) -> None:
     # Exécuté par Streamlit avant le switch de page (callback on_click) : dépose le joueur/la

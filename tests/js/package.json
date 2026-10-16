@@ -2,9 +2,9 @@
   "name": "tests-grille-effectifs",
   "private": true,
   "type": "module",
-  "description": "Tests du JS de la grille de pages/2_Effectifs.py (fonctions d'état avec node, rendu et clics avec jsdom).",
+  "description": "Tests du JS de la grille de pages/2_Effectifs.py et de la liste de recherche de joueurs player_picker/ (fonctions pures avec node, rendu, clics et clavier avec jsdom).",
   "scripts": {
-    "test": "node test_state.mjs && node test_dom.mjs"
+    "test": "node test_state.mjs && node test_dom.mjs && node test_picker.mjs"
   },
   "devDependencies": {
     "jsdom": "^24.1.3"

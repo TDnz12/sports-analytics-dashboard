@@ -373,8 +373,8 @@ recalibrera en ajoutant des saisons, pas à chaque correction de données.
   (celui du match le plus récent, ou la forme accentuée si la source la donne ailleurs ; 29
   joueurs ont plusieurs graphies dans la source), puis une table de 30 corrections vérifiées à
   la main contre la presse et des bases spécialisées (accents, une faute de frappe, le prénom de
-  Charles-Henri Berguet). Les autres noms restent tels que la source les donne. Le tri ignore
-  accents et majuscules.
+  Charles-Henri Berguet). Les autres noms restent tels que la source les donne. Le tri et la
+  recherche de joueurs ignorent accents et majuscules : « gael » trouve « Gaël ».
 - **Un identifiant pour deux noms.** En Pro D2, la source range « Aurelien Lafforgue » et
   « Aurelien Lisena » sous le même identifiant (même club, mêmes maillots, jamais sur la même
   feuille de match). Rien ne prouve qu'il s'agit du même joueur : chaque saison garde le nom donné

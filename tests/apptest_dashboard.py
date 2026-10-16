@@ -19,9 +19,11 @@ writes = []
 nba.write_cache = base.write_cache = lambda df, path, **k: writes.append(str(path))
 from streamlit.testing.v1 import AppTest
 from data_sources.rugby import get_player_stats as rugby_stats
+from tests.pilote_picker import choisir, data as picker_data
 
 PAGE = str(ROOT / "Dashboard.py")
 ok = lambda name: print("ok -", name)
+SEARCH = "Rechercher un joueur"  # étiquette de la liste de recherche de joueurs (player_picker)
 
 
 def new():
@@ -146,24 +148,36 @@ assert points(at) > 300
 widget(at, "selectbox", "Statistique en ordonnée (Y)").set_value("points_per_game").run()
 ok("NBA : titre, défauts, curseurs, légende des échantillons, graduations et tableau inchangés")
 
-widget(at, "selectbox", "Joueur").set_value("Nikola Jokić").run()
-assert not at.exception and widget(at, "button", "Voir le profil radar") is not None
+# Recherche d'un joueur : liste de recherche maison (player_picker), pilotée comme la grille
+# Effectifs (tests/pilote_picker.py). Recherche, clavier et affichage : tests/js/test_picker.mjs.
+d = picker_data(at, SEARCH)
+assert d["placeholder"] == "ex. doncic" and d["max"] == 1 and d["selected"] == [], d
+assert len(d["options"]) > 300 and ["Luka Dončić", "Luka Dončić"] in d["options"]
+assert not [w for w in list(at.selectbox) + list(at.text_input) if w.label in ("Joueur", SEARCH)]
+choisir(at, SEARCH, ["Nikola Jokić"])
+assert at.session_state["searched_player"] == "Nikola Jokić"
+assert widget(at, "button", "Voir le profil radar") is not None
 ok("NBA : bouton « Voir le profil radar » présent")
 
-# Recherche sans accents ni casse (base.filter_options) : un seul résultat est sélectionné directement.
-search_box = widget(at, "text_input", "Rechercher un joueur")
-assert search_box.placeholder == "ex. doncic", search_box.placeholder
-search_box.set_value("doncic").run()
-assert not at.exception and widget(at, "selectbox", "Joueur").value == "Luka Dončić"
-assert widget(at, "selectbox", "Joueur").options == ["Aucun", "Luka Dončić"]
-widget(at, "text_input", "Rechercher un joueur").set_value("").run()
-assert widget(at, "selectbox", "Joueur").value == "Luka Dončić" and len(widget(at, "selectbox", "Joueur").options) > 300
+# Juste après un choix, la liste reçoit déjà la nouvelle sélection (run relancé) : sinon, choisir
+# puis cliquer la croix faisait réapparaître le joueur.
+choisir(at, SEARCH, ["Luka Dončić"])
+assert at.session_state["searched_player"] == "Luka Dončić"
+assert picker_data(at, SEARCH)["selected"] == ["Luka Dončić"]
 # Joueur gardé quand la saison change s'il y existe (2023-24), sinon "Aucun" (2016-17, avant ses débuts).
 widget(at, "selectbox", "Saison").set_value("2023-24").run()
-assert not at.exception and widget(at, "selectbox", "Joueur").value == "Luka Dončić"
+assert not at.exception and picker_data(at, SEARCH)["selected"] == ["Luka Dončić"]
 widget(at, "selectbox", "Saison").set_value("2016-17").run()
-assert not at.exception and widget(at, "selectbox", "Joueur").value == "Aucun"
-ok("NBA : « doncic » sélectionne Luka Dončić ; joueur gardé ou remis à « Aucun » au changement de saison")
+assert not at.exception and picker_data(at, SEARCH)["selected"] == []
+assert at.session_state["searched_player"] == "Aucun"
+widget(at, "selectbox", "Saison").set_value("2024-25").run()
+# Croix : désélection.
+choisir(at, SEARCH, ["Luka Dončić"])
+choisir(at, SEARCH, [])
+assert at.session_state["searched_player"] == "Aucun" and widget(at, "button", "Voir le profil radar") is None
+assert picker_data(at, SEARCH)["selected"] == []
+ok("NBA : placeholder « ex. doncic », Luka Dončić choisi, gardé ou remis à « Aucun » au changement "
+   "de saison, croix pour désélectionner")
 
 # --- Rugby : Top 14 par défaut ----------------------------------------------------
 at = new()
@@ -279,22 +293,22 @@ pos.set_value([]).run()
 ok("Rugby : filtre par poste")
 
 # Recherche : bouton radar présent (lot 6) ; joueur à échantillon court masqué signalé
-search = widget(at, "selectbox", "Joueur")
 short = at.dataframe[0].value.query("Échantillon == 'court'")["Joueur"].iloc[0]
-search.set_value(short).run()
-assert not at.exception and widget(at, "button", "Voir le profil radar") is not None
+choisir(at, SEARCH, [short])
+assert widget(at, "button", "Voir le profil radar") is not None
 assert any("Afficher les échantillons courts" in i.value for i in at.info)
-search.set_value("Aucun").run()
+choisir(at, SEARCH, [])
 assert widget(at, "button", "Voir le profil radar") is None
 ok("Rugby : bouton radar présent, message pour un joueur à échantillon court masqué")
 
-search_box = widget(at, "text_input", "Rechercher un joueur")
-assert search_box.placeholder == "ex. gael", search_box.placeholder
-search_box.set_value("gael f").run()
-assert not at.exception and widget(at, "selectbox", "Joueur").value == "Gaël Fickou"
-widget(at, "text_input", "Rechercher un joueur").set_value("").run()
-widget(at, "selectbox", "Joueur").set_value("Aucun").run()
-ok("Rugby : « gael f » sélectionne Gaël Fickou")
+d = picker_data(at, SEARCH)
+assert d["placeholder"] == "ex. gael" and ["Gaël Fickou", "Gaël Fickou · Centre"] in d["options"], d["placeholder"]
+assert all(" · " in label for _, label in d["options"])
+assert not [l for _, l in d["options"] if re.search(r"\(banc\)|poste mixte|aussi|%", l)]
+choisir(at, SEARCH, ["Gaël Fickou"])
+assert at.session_state["searched_player"] == "Gaël Fickou"
+choisir(at, SEARCH, [])
+ok("Rugby : placeholder « ex. gael », Gaël Fickou proposé et choisi")
 
 # Bouton radar : dépose sport, compétition, saison, période et identifiant du joueur
 _r = rugby_stats("2025-26", competition="top14")
@@ -303,7 +317,7 @@ radar_at = AppTest.from_file(PAGE, default_timeout=300)
 radar_at.session_state["selected_sport"] = "rugby"
 radar_at.run()
 assert not radar_at.exception, radar_at.exception
-widget(radar_at, "selectbox", "Joueur").set_value(_target["player_label"]).run()
+choisir(radar_at, SEARCH, [_target["player_label"]])
 # AppTest ne suit pas st.switch_page vers un fichier de pages/ : neutralisé le temps du clic, puis
 # la page Radar est ouverte avec les clés déposées par le callback.
 import streamlit as _st
@@ -324,7 +338,7 @@ for k, v in deposited.items():
 radar_page.run()
 assert not radar_page.exception, radar_page.exception
 assert radar_page.title[0].value == "Radar de comparaison · Top 14 · 2025-26", radar_page.title[0].value
-assert radar_page.multiselect(key="radar_players").value == [_target["player_uid"]]
+assert picker_data(radar_page, "Joueurs (1 à 4)")["selected"] == [_target["player_uid"]]
 assert widget(radar_page, "selectbox", "Statistiques utilisées").value == "Saison complète (phases finales incluses)"
 ok(f"Rugby : « Voir le profil radar » ouvre le radar de {_target['player_label']} (Top 14 2025-26)")
 

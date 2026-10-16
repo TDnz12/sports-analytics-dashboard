@@ -34,14 +34,15 @@ nba.write_cache = base.write_cache = lambda df, path, **k: writes.append(str(pat
 import streamlit as st
 from data_sources import SPORTS
 from streamlit.testing.v1 import AppTest
+from tests.pilote_picker import choisir, data as picker_data
 
 DASHBOARD, RADAR, EFFECTIFS = "Dashboard.py", "pages/1_Radar_de_comparaison.py", "pages/2_Effectifs.py"
 NBA_ONLY_NOTE = "Page NBA uniquement pour l'instant. Le Dashboard et le Radar restent sur Rugby · Top 14."
 # Clés de widgets de chaque page (effacées par le navigateur quand on la quitte).
 WIDGET_KEYS = {
     DASHBOARD: ["main_sport", "main_competition", "main_season", "min_minutes", "min_games",
-                "show_low_sample"],
-    RADAR: ["radar_sport", "radar_competition", "radar_season", "radar_period", "radar_players"],
+                "show_low_sample", "player_picker"],
+    RADAR: ["radar_sport", "radar_competition", "radar_season", "radar_period", "radar_picker"],
     EFFECTIFS: ["effectifs_season", "mercato_grid"],
 }
 ok = lambda name: print("ok -", name)
@@ -228,15 +229,15 @@ try:
                 select(s.at, "Statistiques utilisées", period)
             # Joueur qui a le plus de minutes : il a forcément un radar (rugby : poste déterminé).
             name = top_player(sport_key, competition, season, period)
-            select(s.at, "Joueur", name)
+            choisir(s.at, "Rechercher un joueur", [name])
             switched.clear()
             next(b for b in s.at.button if b.label == "Voir le profil radar").click().run()
             assert not s.at.exception, s.at.exception
             assert switched == [RADAR], switched
             player_key = s.at.session_state["radar_preselect_player"]
             s.go(RADAR)
-            players = next(m for m in s.at.multiselect if m.label.startswith("Joueurs"))
-            assert players.value == [player_key], (players.value, player_key)
+            players = picker_data(s.at, "Joueurs (1 à 4)")
+            assert players["selected"] == [player_key], (players["selected"], player_key)
             assert select(s.at, "Sport").value == sport_key
             if competition:
                 assert select(s.at, "Compétition").value == competition

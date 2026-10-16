@@ -17,6 +17,7 @@ de data_cache/ sans les modifier (écritures interceptées). Durée : quelques m
 import argparse
 import difflib
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -56,6 +57,17 @@ def capture(out_path: str) -> None:
                          f"sha1={hashlib.sha1(csv.encode()).hexdigest()}")
         for c in at.get("plotly_chart"):
             lines.append(f"[plotly] sha1={hashlib.sha1(c.proto.spec.encode()).hexdigest()}")
+        # Composants maison (st.components.v2) : liste de recherche de joueurs (player_picker) en
+        # clair, sauf ses options (empreinte) ; autres composants (grille Effectifs) : empreinte.
+        for c in find(at._tree, "bidi_component"):
+            d = json.loads(c.proto.json)
+            if isinstance(d, dict) and "options" in d and "label" in d:
+                opts = json.dumps(d["options"], ensure_ascii=False)
+                shown = {k: v for k, v in d.items() if k != "options"}
+                lines.append(f"[player_picker] {json.dumps(shown, ensure_ascii=False, sort_keys=True)} "
+                             f"options={len(d['options'])} sha1={hashlib.sha1(opts.encode()).hexdigest()}")
+            else:
+                lines.append(f"[bidi_component] sha1={hashlib.sha1(c.proto.json.encode()).hexdigest()}")
 
     def new(page, state=None):
         # Chemin absolu : AppTest résout un chemin relatif par rapport au fichier appelant.
@@ -67,14 +79,38 @@ def capture(out_path: str) -> None:
     def select(at, label):
         return next(s for s in at.selectbox if s.label == label)
 
+    def find(node, typ):
+        kids = getattr(node, "children", None)
+        if isinstance(kids, dict):
+            for ch in kids.values():
+                if ch.type == typ:
+                    yield ch
+                yield from find(ch, typ)
+
+    def pick(at, label, keys):
+        # Sélection de joueurs, selon la version : liste Streamlit (avant la liste de recherche
+        # maison), ou liste de recherche player_picker (déclencheur "selection" simulé comme le
+        # navigateur, voir tests/pilote_picker.py).
+        old = [w for w in list(at.selectbox) + list(at.multiselect)
+               if w.label in ("Joueur", "Rechercher un joueur") or getattr(w, "key", None) == "radar_players"]
+        if old:
+            old[0].set_value(keys if isinstance(old[0].value, list) else keys[0]).run()
+            return
+        from streamlit.components.v2.bidi_component.main import _make_trigger_id
+        el = next(c for c in find(at._tree, "bidi_component") if json.loads(c.proto.json).get("label") == label)
+        ws = at._tree.get_widget_states()
+        w = ws.widgets.add()
+        w.id = _make_trigger_id(el.proto.id, "events")
+        w.json_trigger_value = json.dumps([{"event": "selection", "value": keys}])
+        at._run(widget_state=ws)
+
     at = new(DASH); dump(at, "Dashboard par défaut")
     select(at, "Statistiques utilisées").set_value("Playoffs uniquement").run(); dump(at, "Dashboard playoffs")
     at = new(DASH); select(at, "Saison").set_value("2010-11").run(); dump(at, "Dashboard 2010-11")
-    # Liste des joueurs : "Rechercher un joueur" avant le champ de recherche sans accents, "Joueur" après.
-    at = new(DASH); next(s for s in at.selectbox if s.label in ("Joueur", "Rechercher un joueur")).set_value("Nikola Jokić").run(); dump(at, "Dashboard recherche Jokić")
+    at = new(DASH); pick(at, "Rechercher un joueur", ["Nikola Jokić"]); dump(at, "Dashboard recherche Jokić")
     at = new(DASH); select(at, "Saison").set_value(select(at, "Saison").options[0]).run(); dump(at, "Dashboard toutes les saisons")
     at = new(RADAR); dump(at, "Radar par défaut")
-    at.multiselect(key="radar_players").set_value(FOUR).run(); dump(at, "Radar 4 joueurs")
+    pick(at, "Joueurs (1 à 4)", FOUR); dump(at, "Radar 4 joueurs")
     next(r for r in at.radio if "Centile" in r.options).set_value("Centile").run(); dump(at, "Radar 4 joueurs, centile")
     at = new(RADAR); select(at, "Statistiques utilisées").set_value("Playoffs uniquement").run(); dump(at, "Radar playoffs")
     at = new(RADAR, {"radar_preselect_player": "Nikola Jokić", "radar_preselect_season": "2023-24"}); dump(at, "Radar présélection Jokić 2023-24")

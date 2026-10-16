@@ -91,23 +91,6 @@ def sort_key(name: str) -> tuple:
     return unidecode(name).casefold(), name
 
 
-def search_key(text) -> str:
-    """Texte comparé par les champs de recherche : sans accents ni casse, même normalisation que
-    sort_key (« Gaël » -> « gael », « Dončić » -> « doncic »)."""
-    return unidecode(str(text)).casefold()
-
-
-def filter_options(options: list, query: str, label=str, keep=()) -> list:
-    """Options dont le libellé contient chaque mot de `query`, accents et casse ignorés (« gael f »
-    trouve « Gaël Fickou »). Requête vide : toutes les options. Les options de `keep` (déjà
-    sélectionnées) restent toujours, à leur place : le widget ne les perd pas. Le filtre intégré
-    des listes Streamlit (1.64) ne fait que des minuscules, d'où ce filtrage côté Python."""
-    words = search_key(query or "").split()
-    if not words:
-        return list(options)
-    return [o for o in options if o in keep or all(w in search_key(label(o)) for w in words)]
-
-
 SCHEMA_VERSION_COL = "_schema_version"
 
 
