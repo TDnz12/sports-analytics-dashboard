@@ -9,7 +9,7 @@ Il a deux parties : la NBA (les sections ci-dessous jusqu'à la métrique défen
 
 En plus du sélecteur saison par saison, le dashboard propose une vue combinée ("Toutes les
 saisons (1996-97 → 2025-26)" dans le sélecteur) qui charge et concatène l'intégralité de
-`sport.seasons` — chaque joueur y apparaît comme un point distinct par saison jouée.
+`sport.seasons`. Chaque joueur y apparaît comme un point distinct par saison jouée.
 
 Une saison dont le salaire est indisponible n'empêche pas d'afficher les autres : elle apparaît
 simplement avec cette colonne vide plutôt que de faire échouer tout le mode combiné.
@@ -20,7 +20,7 @@ Métrique `reliability_pct` = (somme des matchs joués par le joueur) / (somme d
 possibles de la ligue) sur la saison affichée et les `RELIABILITY_LOOKBACK_SEASONS - 1 = 2`
 précédentes disponibles (`data_sources/nba._fetch_reliability`). "Matchs possibles" vient du
 nombre réel de matchs joués par l'équipe qui en a joué le plus cette saison-là
-(`LeagueDashTeamStats`), pas d'un 82 supposé — certaines saisons sont raccourcies (lockout
+(`LeagueDashTeamStats`), pas d'un 82 supposé, car certaines saisons sont raccourcies (lockout
 2011-12 : 66 matchs ; COVID 2019-20 : 64-75 selon l'équipe ; 2020-21 : 72 matchs). Plafonnée à
 100% (quelques joueurs ressortaient légèrement au-dessus, probablement les matchs de Play-In
 comptés différemment entre `LeagueDashPlayerStats` et `LeagueDashTeamStats`).
@@ -29,11 +29,11 @@ Une recrue avec moins de 3 saisons d'historique n'est sommée que sur les saison
 effectivement joué (`_seasons_lookback` s'arrête à `EARLIEST_SUPPORTED_SEASON_START_YEAR`)
 plutôt que de planter ou de fausser le ratio avec des saisons inexistantes.
 
-Mise en cache par saison, comme le reste — avec une précaution supplémentaire : si une des 3
+Mise en cache par saison, comme le reste, avec une précaution supplémentaire : si une des 3
 saisons de la fenêtre échoue à se charger (ex: timeout réseau), la fiabilité est laissée vide
 pour ce chargement (jamais une valeur calculée sur 2 saisons sur 3, donc fausse) et **rien n'est
 mis en cache**, ni le résultat partiel, ni les données de la saison qui l'utilisent, pour ne pas
-figer une donnée incomplète comme si elle était définitive — le prochain chargement retente les
+figer une donnée incomplète comme si elle était définitive : le prochain chargement retente les
 saisons manquantes au lieu de rester bloqué sur un résultat dégradé.
 
 Le cache disque (`data_cache/processed/nba/`) est versionné (`PROCESSED_SCHEMA_VERSION` dans
@@ -59,12 +59,12 @@ cette saison n'apparaît nulle part.
 **Éligibilité.** Un joueur est éligible s'il remplit au moins un de ces trois critères :
 1. au moins 25% des matchs possibles de la saison avec son équipe de fin de saison ;
 2. au moins 50% des matchs de son équipe depuis son premier match avec elle, et au moins 10
-   matchs avec elle — pour un titulaire arrivé en cours de saison (Kyrie Irving, Dallas
+   matchs avec elle, pour un titulaire arrivé en cours de saison (Kyrie Irving, Dallas
    2022-23 : une vingtaine de matchs sur les 24 restants après son arrivée, sous les 25% de la
    saison) ; le plancher de 10 matchs évite de rendre éligible un contrat de 10 jours qui joue 3
    des 4 derniers matchs ;
 3. au moins 25% des matchs de la saison toutes équipes confondues, et au moins 5 matchs avec
-   son équipe de fin de saison — pour un joueur établi dont le passage dans sa dernière équipe
+   son équipe de fin de saison, pour un joueur établi dont le passage dans sa dernière équipe
    est court (Kevin Durant, Phoenix 2022-23 : 8 matchs à Phoenix après une blessure, 47 sur la
    saison).
 
@@ -262,7 +262,8 @@ Le poste est calculé sur la saison complète : il est le même dans les deux p�
 - **Postes secondaires** : les autres postes portés comme titulaire, avec leur part des
   titularisations.
 - **Poste mixte** : badge affiché quand le poste principal pèse moins de 60 % des
-  titularisations (20 à 36 joueurs par saison parmi ceux qui ont joué au moins 5 matchs). Les
+  titularisations (18 à 28 joueurs par saison en Top 14 et 19 à 33 en Pro D2, parmi ceux qui
+  ont au moins 5 titularisations). Les
   maillots de la source sont justes : Paul Boudehent a bien été aligné en deuxième ligne par
   La Rochelle, et Charles Ollivon titulaire en n° 4 avec Toulon, ce qui fait d'eux des « postes
   mixtes ».
