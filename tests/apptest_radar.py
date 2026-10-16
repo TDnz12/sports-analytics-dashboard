@@ -400,9 +400,12 @@ assert d["texts"]["empty"] == "Aucun joueur trouvé"
 fickou = next(k for k, label in d["options"] if label.startswith("Gaël Fickou"))
 choisir(at, PLAYERS, chosen + [fickou])
 assert at.session_state["radar_players"] == chosen + [fickou] and len(traces(at)) == 3
-assert shown(at) == chosen + [fickou]  # sélection à jour dès le run du choix (run relancé)
+at.run()  # run suivant le clic : nouvelle sélection et numéro du clic envoyés au composant
+assert shown(at) == chosen + [fickou] and picker_data(at, PLAYERS)["seq"] == at._picker_seq[PLAYERS]
 choisir(at, PLAYERS, chosen)  # croix de Gaël Fickou
-assert shown(at) == chosen and len(traces(at)) == 2
+assert len(traces(at)) == 2
+at.run()
+assert shown(at) == chosen
 ok("rugby : placeholder « ex. gael », Gaël Fickou proposé et ajouté sans retirer les autres")
 
 # R12. NBA : placeholder « ex. doncic », Luka Dončić proposé et ajouté.

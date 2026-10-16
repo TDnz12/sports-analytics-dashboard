@@ -18,7 +18,7 @@ const source = readFileSync(new URL("../../player_picker/player_picker.js", impo
 const file = join(mkdtempSync(join(tmpdir(), "picker-")), "player_picker.mjs");
 writeFileSync(file, source);
 
-const dom = new JSDOM("<!doctype html><body><div id=a></div><div id=b></div></body>");
+const dom = new JSDOM("<!doctype html><body><div id=a></div><div id=b></div><div id=c></div><div id=d></div><div id=e></div></body>");
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
 const P = await import(pathToFileURL(file).href);
@@ -65,8 +65,11 @@ test("mise en évidence : parties trouvées, accents d'origine gardés", () => {
 // --- 2. Rendu, souris, clavier ----------------------------------------------------------------
 function mount(hostId, data) {
   const shadow = document.getElementById(hostId).attachShadow({ mode: "open" });
+  // sent : [événement, clés] ; seqs : numéros des changements envoyés.
   const sent = [];
-  const cleanup = P.default({ data, parentElement: shadow, setTriggerValue: (e, v) => sent.push([e, v]) });
+  const seqs = [];
+  const setTriggerValue = (e, v) => { sent.push([e, v.keys]); seqs.push(v.seq); };
+  const cleanup = P.default({ data, parentElement: shadow, setTriggerValue });
   const $ = (sel) => shadow.querySelector(sel);
   const $$ = (sel) => [...shadow.querySelectorAll(sel)];
   const input = $(".pp-input");
@@ -74,8 +77,15 @@ function mount(hostId, data) {
   const key = (k) => input.dispatchEvent(new window.KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
   const click = (node) => node.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   const options = () => $$(".pp-option").map((li) => li.textContent);
-  const rerender = (next) => P.default({ data: next, parentElement: shadow, setTriggerValue: (e, v) => sent.push([e, v]) });
-  return { shadow, sent, $, $$, input, type, key, click, options, rerender, cleanup };
+  const rerender = (next) => P.default({ data: next, parentElement: shadow, setTriggerValue });
+  // Modifications du DOM des pastilles et du nom affiché, relevées de façon synchrone.
+  const observer = new window.MutationObserver(() => {});
+  observer.observe(shadow, { childList: true, subtree: true, characterData: true });
+  const valueChanges = () => observer.takeRecords().filter((r) => {
+    const t = r.target.nodeType === 1 ? r.target : r.target.parentElement;
+    return t && (t.closest(".pp-values") || t.classList.contains("pp-values"));
+  });
+  return { shadow, sent, seqs, $, $$, input, type, key, click, options, rerender, cleanup, valueChanges };
 }
 const TEXTS = { empty: "Aucun joueur trouvé", remove: "Retirer", clear: "Désélectionner",
                 full: "4 joueurs au maximum : retire un joueur pour en ajouter un." };
@@ -142,7 +152,7 @@ test("Dashboard : croix pour désélectionner", () => {
 test("Dashboard : valeur venue de Python (présélection, saison) affichée sans rien renvoyer", () => {
   const before = single.sent.length;
   single.rerender({ options: NBA, selected: ["Nikola Jokić"], max: 1, label: "Rechercher un joueur",
-                    placeholder: "ex. doncic", texts: TEXTS });
+                    placeholder: "ex. doncic", texts: TEXTS, seq: 3, epoch: 1 });
   assert.equal(single.$(".pp-single").textContent, "Nikola Jokić");
   assert.equal(single.sent.length, before);
 });
@@ -219,8 +229,80 @@ test("Radar : limite de 4, message et ajout refusé (clavier et souris)", () => 
 
 test("Radar : la sélection envoyée par Python remplace celle affichée", () => {
   radar.rerender({ options: RUGBY.concat(NBA), selected: ["Stephen Curry"], max: 4,
-                   label: "Joueurs (1 à 4)", placeholder: "ex. gael", texts: TEXTS });
+                   label: "Joueurs (1 à 4)", placeholder: "ex. gael", texts: TEXTS, seq: 4, epoch: 1 });
   assert.deepEqual(chips(), ["Stephen Curry"]);
+});
+
+// --- 3. Synchronisation sans clignotement --------------------------------------------------
+test("acceptSelection : montage, à jour, en retard, imposée par Python", () => {
+  assert.deepEqual(P.acceptSelection(null, { seq: 6, epoch: 2 }), [true, { seq: 6, epoch: 2 }]);
+  assert.deepEqual(P.acceptSelection({ seq: 3, epoch: 0 }, { seq: 3, epoch: 0 }), [true, { seq: 3, epoch: 0 }]);
+  assert.deepEqual(P.acceptSelection({ seq: 3, epoch: 0 }, { seq: 2, epoch: 0 }), [false, { seq: 3, epoch: 0 }]);
+  assert.deepEqual(P.acceptSelection({ seq: 3, epoch: 0 }, { seq: 2, epoch: 1 }), [true, { seq: 3, epoch: 1 }]);
+  assert.deepEqual(P.acceptSelection({ seq: 0, epoch: 0 }, {}), [true, { seq: 0, epoch: 0 }]);
+});
+
+const BASE = { options: RUGBY.concat(NBA), max: 4, label: "Joueurs (1 à 4)", placeholder: "ex. gael", texts: TEXTS };
+const late = mount("c", { ...BASE, selected: ["icw:1"], seq: 0, epoch: 0 });
+const lateChips = () => late.$$(".pp-chip-text").map((c) => c.textContent.split(" (")[0]);
+
+test("Radar : sélection en retard reçue juste après un clic, ignorée sans toucher au DOM", () => {
+  late.type("fickou");
+  late.key("Enter");
+  assert.deepEqual(late.sent, [["selection", ["icw:1", "icw:199515"]]]);
+  assert.deepEqual(late.seqs, [1]);
+  late.valueChanges();
+  // Run déclenché avant que Python ne reçoive le clic : ancienne sélection, numéro 0.
+  late.rerender({ ...BASE, selected: ["icw:1"], seq: 0, epoch: 0 });
+  assert.deepEqual(late.valueChanges(), [], "la case a bougé : clignotement");
+  assert.deepEqual(lateChips(), ["Antoine Dupont", "Gaël Fickou"]);
+  // Run suivant : Python a reçu le clic (numéro 1) et renvoie la nouvelle sélection.
+  late.rerender({ ...BASE, selected: ["icw:1", "icw:199515"], seq: 1, epoch: 0 });
+  assert.deepEqual(late.valueChanges(), []);
+  assert.deepEqual(lateChips(), ["Antoine Dupont", "Gaël Fickou"]);
+});
+
+test("Radar : deux clics rapides, sélections en retard des deux runs ignorées", () => {
+  late.click(late.$$(".pp-chip-remove")[0]);                 // numéro 2
+  late.type("doncic"); late.key("Enter");                    // numéro 3
+  assert.deepEqual(late.seqs, [1, 2, 3]);
+  late.valueChanges();
+  late.rerender({ ...BASE, selected: ["icw:1", "icw:199515"], seq: 1, epoch: 0 });
+  late.rerender({ ...BASE, selected: ["icw:199515"], seq: 2, epoch: 0 });
+  assert.deepEqual(late.valueChanges(), []);
+  assert.deepEqual(lateChips(), ["Gaël Fickou", "Luka Dončić"]);
+  late.rerender({ ...BASE, selected: ["icw:199515", "Luka Dončić"], seq: 3, epoch: 0 });
+  assert.deepEqual(lateChips(), ["Gaël Fickou", "Luka Dončić"]);
+});
+
+test("Radar : sélection imposée par Python (epoch plus grande) toujours appliquée", () => {
+  late.type("jokic"); late.key("Enter");                     // numéro 4, pas encore reçu
+  late.rerender({ ...BASE, selected: ["Stephen Curry"], seq: 3, epoch: 1 });
+  assert.deepEqual(lateChips(), ["Stephen Curry"]);
+  late.type("curry gilgeous"); late.type("shai"); late.key("Enter");   // le numéro continue : 5
+  assert.deepEqual(late.seqs.at(-1), 5);
+});
+
+test("Retour sur la page : la case repart du numéro de Python", () => {
+  late.cleanup();
+  const again = mount("d", { ...BASE, selected: ["icw:3"], seq: 5, epoch: 1 });
+  assert.deepEqual(again.$$(".pp-chip-text").map((c) => c.textContent.split(" (")[0]), ["Romain Ntamack"]);
+  again.type("dupont"); again.key("Enter");
+  assert.deepEqual(again.seqs, [6]);
+  again.cleanup();
+});
+
+test("Dashboard : nom en retard ignoré, sans clignotement", () => {
+  const dash = mount("e", { options: NBA, selected: [], max: 1, label: "Rechercher un joueur",
+                            placeholder: "ex. doncic", texts: TEXTS, seq: 0, epoch: 0 });
+  dash.type("doncic"); dash.key("Enter");
+  dash.valueChanges();
+  dash.rerender({ options: NBA, selected: [], max: 1, label: "Rechercher un joueur",
+                  placeholder: "ex. doncic", texts: TEXTS, seq: 0, epoch: 0 });
+  assert.deepEqual(dash.valueChanges(), []);
+  assert.equal(dash.$(".pp-single").textContent, "Luka Dončić");
+  assert.equal(dash.$(".pp-clear").hidden, false);
+  dash.cleanup();
 });
 
 test("Nettoyage : la liste est retirée du DOM", () => {

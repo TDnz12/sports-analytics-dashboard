@@ -2,7 +2,8 @@
 Effectifs (tests/apptest_effectifs.py) : AppTest ne fait pas tourner le JavaScript du composant.
 On lit les données que Python lui envoie (étiquette, options, sélection affichée, placeholder) et on
 simule ce que le navigateur renvoie après un clic ou Entrée : le déclencheur "selection" avec la
-nouvelle liste de clés. La recherche, le clavier et l'affichage sont testés à part, dans
+nouvelle liste de clés et le numéro du changement (seq, voir player_picker). La recherche, le
+clavier, l'affichage et la synchronisation côté navigateur sont testés à part, dans
 tests/js/test_picker.mjs.
 
 Usage :  data(at, "Rechercher un joueur")["selected"] ; choisir(at, "Joueurs (1 à 4)", [clés])
@@ -37,11 +38,17 @@ def data(at, label):
 
 
 def choisir(at, label, keys):
-    """Simule un changement de sélection dans le navigateur (clic, Entrée ou croix)."""
-    el, _ = _picker(at, label)
+    """Simule un changement de sélection dans le navigateur (clic, Entrée ou croix). Numéro : un
+    de plus que le dernier connu, comme le composant (les données du run d'un clic portent encore
+    l'ancien numéro, d'où le compteur gardé ici)."""
+    el, d = _picker(at, label)
+    last = getattr(at, "_picker_seq", {})
+    seq = max(d.get("seq", 0), last.get(label, 0)) + 1
+    last[label] = seq
+    at._picker_seq = last
     ws = at._tree.get_widget_states()
     w = ws.widgets.add()
     w.id = _make_trigger_id(el.proto.id, "events")
-    w.json_trigger_value = json.dumps([{"event": "selection", "value": list(keys)}])
+    w.json_trigger_value = json.dumps([{"event": "selection", "value": {"keys": list(keys), "seq": seq}}])
     at._run(widget_state=ws)
     assert not at.exception, at.exception

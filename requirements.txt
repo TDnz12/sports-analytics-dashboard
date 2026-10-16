@@ -5,5 +5,5 @@ plotly==7.1.0
 requests==2.34.2
 nba_api==1.11.4
 kagglehub==1.0.2
-pyarrow==25.0.1
+pyarrow==24.0.0
 unidecode==1.4.0

@@ -98,11 +98,18 @@ def capture(out_path: str) -> None:
             return
         from streamlit.components.v2.bidi_component.main import _make_trigger_id
         el = next(c for c in find(at._tree, "bidi_component") if json.loads(c.proto.json).get("label") == label)
+        # Valeur du déclencheur selon la version : liste de clés, puis { keys, seq } (numéro du
+        # changement, présent dans les données envoyées au composant).
+        d = json.loads(el.proto.json)
+        value = {"keys": keys, "seq": d["seq"] + 1} if "seq" in d else keys
         ws = at._tree.get_widget_states()
         w = ws.widgets.add()
         w.id = _make_trigger_id(el.proto.id, "events")
-        w.json_trigger_value = json.dumps([{"event": "selection", "value": keys}])
+        w.json_trigger_value = json.dumps([{"event": "selection", "value": value}])
         at._run(widget_state=ws)
+        # Run suivant : sans relance forcée, le run du clic envoie encore l'ancienne sélection au
+        # composant (voir player_picker) ; l'instantané compare l'état stable.
+        at.run()
 
     at = new(DASH); dump(at, "Dashboard par défaut")
     select(at, "Statistiques utilisées").set_value("Playoffs uniquement").run(); dump(at, "Dashboard playoffs")

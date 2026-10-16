@@ -5,9 +5,14 @@
 //   2. rendu DOM + clavier/souris/tactile (export default, appelé par Streamlit au montage puis à
 //      chaque changement de `data`).
 // La recherche se fait entièrement ici, à chaque lettre, sans relancer la page. Python n'est
-// prévenu (setTriggerValue("selection", [clés])) que d'un vrai changement de sélection : taper ne
-// touche jamais à la sélection. La sélection affichée vient de Python (data.selected) à chaque
-// envoi de données (présélection, saison, navigation).
+// prévenu (setTriggerValue("selection", { keys, seq })) que d'un vrai changement de sélection :
+// taper ne touche jamais à la sélection.
+// Synchronisation sans clignotement (voir acceptSelection) : chaque changement porte un numéro
+// seq ; Python renvoie le dernier qu'il a reçu (data.seq) avec la sélection. Une sélection reçue
+// avec un numéro plus ancien que le dernier changement local est en retard (envoyée avant que
+// Python ne reçoive le clic) : ignorée, la case garde sa sélection. Une sélection imposée par
+// Python (présélection, saison, navigation) arrive avec un data.epoch plus grand : toujours
+// appliquée.
 // Tests : tests/js/test_picker.mjs.
 
 // ---------------------------------------------------------------------------------------------
@@ -67,6 +72,18 @@ export function highlightParts(label, query) {
   return parts;
 }
 
+// Faut-il appliquer la sélection reçue de Python ? `sync` : { seq, epoch } de la case (dernier
+// changement local, dernière sélection imposée vue), null avant les premières données ; `incoming` :
+// { seq, epoch } des données reçues. Renvoie [appliquer, nouvel état de synchronisation].
+export function acceptSelection(sync, incoming) {
+  const seq = incoming.seq ?? 0;
+  const epoch = incoming.epoch ?? 0;
+  if (sync === null) return [true, { seq, epoch }];                       // montage (ou retour sur la page)
+  if (epoch > sync.epoch) return [true, { seq: Math.max(sync.seq, seq), epoch }];  // imposée par Python
+  if (seq >= sync.seq) return [true, { ...sync, seq }];                   // à jour
+  return [false, sync];                                                   // en retard : ignorée
+}
+
 // ---------------------------------------------------------------------------------------------
 // 2. Rendu DOM
 // ---------------------------------------------------------------------------------------------
@@ -119,6 +136,7 @@ export function createPicker(parent) {
   let results = [];
   let active = 0;
   let trigger = () => {};
+  let sync = null;
   const multi = () => data.max > 1;
   const full = () => multi() && selected.length >= data.max;
   const labelOf = new Map();
@@ -127,16 +145,23 @@ export function createPicker(parent) {
   function emit(next) {
     if (next.length === selected.length && next.every((k, i) => k === selected[i])) return;
     selected = next;
+    sync = { ...sync, seq: sync.seq + 1 };
     renderValues();
-    trigger("selection", [...selected]);
+    trigger("selection", { keys: [...selected], seq: sync.seq });
   }
 
+  // Pastilles et nom affiché reconstruits seulement si la sélection affichée change : une sélection
+  // reçue identique (ou ignorée car en retard) ne touche pas au DOM, donc rien ne clignote.
+  let shown = null;
   function renderValues() {
-    label.textContent = data.label || "";
+    if (label.textContent !== (data.label || "")) label.textContent = data.label || "";
     label.hidden = !data.label;
-    values.querySelectorAll(".pp-chip").forEach((c) => c.remove());
+    const signature = JSON.stringify([multi(), selected.map((k) => [k, labelOf.get(k)])]);
+    const changed = signature !== shown;
+    shown = signature;
+    if (changed) values.querySelectorAll(".pp-chip").forEach((c) => c.remove());
     if (multi()) {
-      for (const key of selected) {
+      for (const key of changed ? selected : []) {
         const chip = el("span", "pp-chip");
         const text = el("span", "pp-chip-text", labelOf.get(key) ?? String(key));
         const remove = el("button", "pp-chip-remove", "×");
@@ -150,7 +175,8 @@ export function createPicker(parent) {
       clear.hidden = true;
     } else {
       const key = selected[0];
-      single.textContent = key == null ? "" : labelOf.get(key) ?? String(key);
+      const text = key == null ? "" : labelOf.get(key) ?? String(key);
+      if (single.textContent !== text) single.textContent = text;
       single.hidden = key == null || input.value !== "";
       clear.hidden = key == null;
       clear.setAttribute("aria-label", data.texts.clear || "Désélectionner");
@@ -297,7 +323,10 @@ export function createPicker(parent) {
       index = buildIndex(data.options || []);
       labelOf.clear();
       for (const o of index) labelOf.set(o.key, o.label);
-      selected = (data.selected || []).filter((k) => labelOf.has(k));
+      const [apply, nextSync] = acceptSelection(sync, data);
+      sync = nextSync;
+      const incoming = apply ? data.selected || [] : selected;
+      selected = incoming.filter((k) => labelOf.has(k));
       renderValues();
       if (isOpen()) renderMenu();
     },

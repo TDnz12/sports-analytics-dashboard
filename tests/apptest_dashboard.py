@@ -159,22 +159,32 @@ assert at.session_state["searched_player"] == "Nikola Jokić"
 assert widget(at, "button", "Voir le profil radar") is not None
 ok("NBA : bouton « Voir le profil radar » présent")
 
-# Juste après un choix, la liste reçoit déjà la nouvelle sélection (run relancé) : sinon, choisir
-# puis cliquer la croix faisait réapparaître le joueur.
+# Synchronisation sans relance forcée (player_picker) : le run du clic envoie encore l'ancienne
+# sélection, avec un numéro plus ancien que celui du clic (le composant l'ignore, voir
+# tests/js/test_picker.mjs) ; le run suivant envoie la nouvelle, avec le numéro du clic et la même
+# epoch (rien d'imposé par Python).
+epoch = picker_data(at, SEARCH)["epoch"]
 choisir(at, SEARCH, ["Luka Dončić"])
 assert at.session_state["searched_player"] == "Luka Dončić"
-assert picker_data(at, SEARCH)["selected"] == ["Luka Dončić"]
+d = picker_data(at, SEARCH)
+assert d["selected"] != ["Luka Dončić"] and d["seq"] < at._picker_seq[SEARCH], d["seq"]
+at.run()
+d = picker_data(at, SEARCH)
+assert d["selected"] == ["Luka Dončić"] and d["seq"] == at._picker_seq[SEARCH] and d["epoch"] == epoch
 # Joueur gardé quand la saison change s'il y existe (2023-24), sinon "Aucun" (2016-17, avant ses débuts).
 widget(at, "selectbox", "Saison").set_value("2023-24").run()
 assert not at.exception and picker_data(at, SEARCH)["selected"] == ["Luka Dončić"]
 widget(at, "selectbox", "Saison").set_value("2016-17").run()
+# Sélection imposée par Python (joueur absent de la saison) : epoch augmentée, toujours appliquée.
 assert not at.exception and picker_data(at, SEARCH)["selected"] == []
+assert picker_data(at, SEARCH)["epoch"] == epoch + 1
 assert at.session_state["searched_player"] == "Aucun"
 widget(at, "selectbox", "Saison").set_value("2024-25").run()
 # Croix : désélection.
 choisir(at, SEARCH, ["Luka Dončić"])
 choisir(at, SEARCH, [])
 assert at.session_state["searched_player"] == "Aucun" and widget(at, "button", "Voir le profil radar") is None
+at.run()
 assert picker_data(at, SEARCH)["selected"] == []
 ok("NBA : placeholder « ex. doncic », Luka Dončić choisi, gardé ou remis à « Aucun » au changement "
    "de saison, croix pour désélectionner")
