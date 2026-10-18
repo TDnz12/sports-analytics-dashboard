@@ -1,11 +1,12 @@
 """
-Dashboard interactif de data analytics sportive — MVP Basketball (NBA).
+Dashboard interactif de data analytics sportive : NBA et rugby (Top 14, Pro D2).
 
 Architecture multi-sport : ce fichier ne connaît que l'interface (Streamlit)
 et le registre data_sources.SPORTS. Toute la logique spécifique à un sport
 (scraping, téléchargement, normalisation, cache) vit dans /data_sources.
-Ajouter un sport (le rugby est le prochain prévu, puis MMA/tennis) = créer
-data_sources/<sport>.py avec la même interface et l'enregistrer dans data_sources/__init__.py.
+Ajouter un sport (MMA, tennis...) = créer data_sources/<sport>.py (ou un paquet
+data_sources/<sport>/, comme le rugby) avec la même interface et l'enregistrer
+dans data_sources/__init__.py.
 """
 
 from __future__ import annotations
@@ -25,8 +26,9 @@ st.set_page_config(page_title="Sports Analytics Dashboard", layout="wide")
 
 # CSS de densité : réduit les marges/espacements par défaut de Streamlit pour que le graph
 # tienne à l'écran sans scroll au chargement. Purement présentationnel (aucune logique
-# touchée). Cible les data-testid internes de Streamlit 1.63 — plusieurs sélecteurs
-# redondants (testid + fallback classe) pour rester robuste si la version change un peu.
+# touchée). Cible les data-testid internes de Streamlit (écrits sous 1.63, toujours valides
+# en 1.64.0) : plusieurs sélecteurs redondants (testid + fallback classe) pour rester
+# robuste si la version change un peu.
 st.markdown(
     """
     <style>

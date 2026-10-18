@@ -46,6 +46,12 @@ Une carte par équipe avec ses 6 joueurs clés de la saison : le 5 majeur et le 
 
 ## Installation
 
+Python 3.12 minimum est requis (3.13 recommandé, c'est la version de Streamlit Cloud) : `numpy==2.5.3` refuse de s'installer sous Python 3.11. Pour vérifier ta version :
+
+```bash
+python3 --version
+```
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
