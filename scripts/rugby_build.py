@@ -6,11 +6,15 @@ déjà avoir été téléchargés par scripts/rugby_download.py.
     <racine>/raw/rugby/<compétition>/<saison>/{matches,lineups,player_match,events,team_match}.parquet
     <racine>/processed/rugby/<compétition>/<saison>.parquet            (saison complète)
     <racine>/processed/rugby/<compétition>/<saison>_regular.parquet    (phase régulière)
+puis, pour chaque fenêtre de 3 saisons qui contient une saison construite (mode 3 saisons du radar),
+depuis les tables brutes parquet (sans relire les JSON) :
+    <racine>/processed/rugby/<compétition>/<saison>_3saisons[_regular].parquet
 <racine> = data_cache/ par défaut, ou --out-root pour un essai hors du dépôt.
 
 Usage :
     PYTHONPATH=. python scripts/rugby_build.py --comp top14
     PYTHONPATH=. python scripts/rugby_build.py --comp top14 --seasons 202501 --out-root /tmp/essai
+    PYTHONPATH=. python scripts/rugby_build.py --comp top14 --windows-only   (fenêtres seules)
 """
 from __future__ import annotations
 
@@ -23,16 +27,16 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from data_sources.base import write_cache  # noqa: E402
+from data_sources.base import read_cache, write_cache  # noqa: E402
 from data_sources.rugby import schema  # noqa: E402
-from data_sources.rugby.aggregate import aggregate_season  # noqa: E402
+from data_sources.rugby.aggregate import aggregate_season, aggregate_window  # noqa: E402
 from data_sources.rugby.incrowd import (  # noqa: E402
     APPEARANCE_STATS, extract_season, score_gaps, scoring_check,
 )
 from data_sources.rugby.minutes import (  # noqa: E402
     TEAM_TOLERANCE_MIN, reconstruct_minutes, team_minutes_check,
 )
-from data_sources.rugby.positions import UNDETERMINED  # noqa: E402
+from data_sources.rugby.positions import POSITION_GROUPS, UNDETERMINED  # noqa: E402
 
 
 def parse_seasons(competition: str, text: str | None) -> list[int]:
@@ -259,22 +263,115 @@ def build_season(competition: str, season_id: int, out_root: Path | None,
             + control_report(tables, processed, competition, summary))
 
 
+# Totaux comparés, dans le contrôle d'une fenêtre, à la somme des caches saison par saison.
+WINDOW_CHECK_COLUMNS = ["games_played", "starts", "matchday_squads", "minutes_total", "tackles",
+                        "missed_tackles", "metres", "carries", "penalties_conceded"]
+
+
+def _reference(df: pd.DataFrame) -> pd.Series:
+    """Population de référence du radar (même règle que radar.compute_radar_scores)."""
+    return df["position_group"].isin(POSITION_GROUPS) & ~df["low_sample_size"]
+
+
+def window_report(window: pd.DataFrame, seasons: dict[str, pd.DataFrame]) -> list[str]:
+    """Contrôle d'une fenêtre (période donnée) : totaux = somme des caches saison, référence par
+    poste contre la saison choisie, joueurs qui gagnent un radar, postes qui changent."""
+    lines = []
+    add = lines.append
+    w = window.set_index("player_uid")
+    last = seasons[w["window_end"].iloc[0]].set_index("player_uid")
+    summed = sum(d.set_index("player_uid")[WINDOW_CHECK_COLUMNS].reindex(w.index).fillna(0)
+                 for d in seasons.values())
+    bad = ((summed - w[WINDOW_CHECK_COLUMNS].astype(float).fillna(0)).abs() > 1e-9).sum()
+    union = set().union(*(d["player_uid"] for d in seasons.values()))
+    add(f"Joueurs : {len(w)} (union des saisons : {len(union)}) ; saisons jouées "
+        f"{w['seasons_played'].value_counts().sort_index().to_dict()}")
+    add("Totaux = somme des caches saison (" + ", ".join(WINDOW_CHECK_COLUMNS) + ") : "
+        + ("aucun écart" if not bad.any() else
+           "ÉCARTS " + ", ".join(f"{c} {n}" for c, n in bad.items() if n)))
+    ref_w = w[_reference(w)]["position_group"].value_counts()
+    ref_1 = last[_reference(last)]["position_group"].value_counts()
+    add(f"Référence (5 matchs et 520 min, avec poste) : {int(ref_1.sum())} joueurs sur la saison "
+        f"choisie, {int(ref_w.sum())} sur la fenêtre")
+    add("  " + ", ".join(f"{g} {int(ref_1.get(g, 0))} -> {int(ref_w.get(g, 0))}"
+                         for g in POSITION_GROUPS))
+    short = last[last["position_group"].isin(POSITION_GROUPS) & last["low_sample_size"]
+                 & (last["games_played"] > 0)].index
+    gained = [u for u in short if _reference(w).get(u, False)]
+    add(f"Joueurs de la saison choisie en échantillon court : {len(short)}, dont {len(gained)} "
+        f"dans la référence sur la fenêtre ; joueurs de référence absents de la saison choisie : "
+        f"{int((_reference(w) & ~w.index.isin(last.index)).sum())}")
+    changed = w["season_position_group"].notna() & (w["season_position_group"] != w["position_group"])
+    add(f"Poste de la fenêtre différent de celui de la saison choisie : {int(changed.sum())} joueurs")
+    return lines
+
+
+def build_windows(competition: str, out_root: Path | None, touched: list[str] | None = None,
+                  summary_rows: list | None = None) -> list[str]:
+    """Caches des fenêtres de 3 saisons qui contiennent une saison de `touched` (toutes si None),
+    depuis les tables brutes et les caches saison déjà écrits sous `out_root`."""
+    lines = []
+    for season in reversed(schema.season_labels(competition)):
+        labels = schema.window_seasons(competition, season)
+        if labels is None or (touched is not None and not set(labels) & set(touched)):
+            continue
+        title = f"=== {schema.COMPETITION_SPECS[competition].label} {labels[0]} à {season} (3 saisons) ==="
+        raw = {s: {t: read_cache(schema.raw_table_path(competition, s, t, root=out_root),
+                                 schema_version=schema.RUGBY_RAW_TABLES_SCHEMA_VERSION)
+                   for t in schema.RAW_TABLES} for s in labels}
+        per_season = {(s, p): read_cache(schema.processed_path(competition, s, p, root=out_root),
+                                         schema_version=schema.RUGBY_PROCESSED_SCHEMA_VERSION)
+                      for s in labels for p in schema.PERIODS}
+        missing = sorted({s for s in labels if any(df is None for df in raw[s].values())}
+                         | {s for (s, _), df in per_season.items() if df is None})
+        if missing:
+            lines += [title, f"Non construite : tables ou caches saison absents ou anciens pour "
+                             f"{', '.join(missing)} (construire ces saisons d'abord).", ""]
+            continue
+        lines.append(title)
+        for period in schema.PERIODS:
+            window = aggregate_window(raw, competition, period)
+            write_cache(window, schema.window_path(competition, season, period, root=out_root),
+                        schema_version=schema.RUGBY_WINDOW_SCHEMA_VERSION)
+            lines.append(f"Période {period} :")
+            lines.extend("  " + line for line in window_report(
+                window, {s: per_season[(s, period)] for s in labels}))
+            if summary_rows is not None and period == "all":
+                summary_rows.append({"fenêtre": f"{labels[0]} à {season}", "joueurs": len(window),
+                                     "référence": int(_reference(window).sum())})
+        lines.append("")
+    return lines
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     incrowd = [k for k, s in schema.COMPETITION_SPECS.items() if s.source == schema.SOURCE_INCROWD]
     parser.add_argument("--comp", required=True, choices=incrowd)
     parser.add_argument("--seasons", help="ids InCrowd, ex. 202501 ou 202101-202501 (défaut : toutes)")
     parser.add_argument("--out-root", type=Path, help="racine de sortie à la place de data_cache/")
+    parser.add_argument("--windows-only", action="store_true",
+                        help="seulement les fenêtres de 3 saisons, depuis les tables déjà construites")
     args = parser.parse_args(argv)
+    if args.windows_only:
+        windows = []
+        print("\n".join(build_windows(args.comp, args.out_root, summary_rows=windows)), flush=True)
+        print(pd.DataFrame(windows).to_string(index=False))
+        return 0
     rows = []
+    built = []
     for season_id in parse_seasons(args.comp, args.seasons):
+        built.append(schema.season_label(args.comp, season_id))
         summary = {"saison": schema.season_label(args.comp, season_id)}
         print("\n".join(build_season(args.comp, season_id, args.out_root, summary=summary)),
               flush=True)
         print()
         rows.append(summary)
+    windows = []
+    print("\n".join(build_windows(args.comp, args.out_root, built, summary_rows=windows)), flush=True)
     print(f"=== Récapitulatif {schema.COMPETITION_SPECS[args.comp].label} ===")
     print(pd.DataFrame(rows).to_string(index=False))
+    if windows:
+        print(pd.DataFrame(windows).to_string(index=False))
     return 0
 
 

@@ -14,6 +14,9 @@ comparés, scores, cartes joueur, colonnes hors radar du tableau et notes sous l
   valeurs brutes par 80 (règle des 0,4, décision 13).
 - "Indéterminé" (remplaçants 19 à 23 jamais titulaires) : ni axes ni référence, pas de radar
   (radar_eligible = False). Un poste déduit du banc (16 à 18) a un radar comme les autres.
+- Mode 3 saisons (window_status, chantier E) : la table est celle de la fenêtre (stats.get_player_stats,
+  window=3), donc la référence aussi ; seuils, axes, padding et M inchangés. La carte donne la
+  fenêtre, les saisons jouées et une ligne par saison.
 """
 
 from __future__ import annotations
@@ -88,15 +91,17 @@ AXES_BY_KEY = {a["key"]: a for a in RADAR_AXES}
 RADAR_REFERENCE_CAPTION = (
     "Chaque axe est un z-score par poste (10 postes, du pilier à l'arrière) : chaque joueur est "
     "situé par rapport aux joueurs de référence de son propre poste (au moins "
-    f"{_MIN_GAMES} matchs et {_MIN_MINUTES} minutes, même compétition, saison et période), pas à "
-    "l'ensemble du championnat. Axes par 80 minutes, sauf les pourcentages."
+    f"{_MIN_GAMES} matchs et {_MIN_MINUTES} minutes, même compétition, saison ou fenêtre de 3 "
+    "saisons, et période), pas à l'ensemble du championnat. Axes par 80 minutes, sauf les "
+    "pourcentages."
 )
 
 # Aide du choix "Mode d'affichage" de la page radar.
 RADAR_MODE_HELP = (
     "Indice : z-score par poste borné à ±3 écarts-types, mis à l'échelle 0-100 (50 = moyenne du "
     "poste). Centile : rang percentile réel dans la même population (poste, même compétition, "
-    f"saison et période, au moins {_MIN_GAMES} matchs et {_MIN_MINUTES} minutes) ; par exemple, "
+    f"saison ou fenêtre de 3 saisons, et période, au moins {_MIN_GAMES} matchs et {_MIN_MINUTES} "
+    "minutes) ; par exemple, "
     "90 = ce joueur fait mieux que 90 % des joueurs de référence à son poste sur cet axe."
 )
 
@@ -114,6 +119,30 @@ RADAR_CAVEATS: list[str] = [
     "(minutes + M) x 80, avec M de 89 à 1 982 minutes selon la stat (calibration) ; valeur brute "
     "entre parenthèses.",
 ]
+
+
+def window_status(competition: str, season: str) -> tuple[str | None, str | None]:
+    """Mode 3 saisons pour cette compétition et cette saison : (libellé de la fenêtre, None) si elle
+    existe ("2023-24 à 2025-26"), sinon (None, phrase d'explication affichée sous le choix grisé)."""
+    labels = schema.window_seasons(competition, season)
+    if labels:
+        return f"{labels[0]} à {labels[-1]}", None
+    spec = schema.COMPETITION_SPECS[competition]
+    if spec.mode != schema.CLUB:
+        return None, "Mode 3 saisons réservé aux compétitions de club (Top 14, Pro D2)."
+    first = schema.season_labels(competition)[-1]
+    year = int(season[:4]) - (schema.WINDOW_SEASONS - 1)
+    start = f"{year}-{str(year + 1)[-2:]}"
+    return None, (f"Mode 3 saisons indisponible pour {season} : il faudrait les saisons {start} à "
+                  f"{season} de la même source, et les données {spec.label} commencent en {first}.")
+
+
+WINDOW_NOTE = (
+    "Mode 3 saisons ({window}) : totaux additionnés sur les 3 saisons puis divisés par les minutes "
+    "(jamais une moyenne des saisons) ; joueurs de référence = joueurs du poste sur la même "
+    f"fenêtre, au moins {_MIN_GAMES} matchs et {_MIN_MINUTES} minutes au total ; poste et club "
+    "principal calculés sur la fenêtre. Mêmes axes qu'en 1 saison."
+)
 
 
 def _shrunk_per80(result: pd.DataFrame, stat: str, m: float) -> pd.Series:
@@ -216,6 +245,8 @@ def radar_notes(df: pd.DataFrame, positions) -> list[str]:
             parts.append(f"{g} {n} joueurs" + (" (moins de 10 : comparaison fragile)"
                                                if n < MIN_REFERENCE_PLAYERS else ""))
         notes.append("Joueurs de référence : " + ", ".join(parts) + ".")
+    if "window_label" in df.columns and len(df):
+        notes.append(WINDOW_NOTE.format(window=df["window_label"].iloc[0]))
     n_out = int((~df["radar_eligible"] & (df["games_played"].fillna(0) > 0)).sum())
     if n_out:
         notes.append(f"{n_out} joueurs sans poste déterminé (remplaçants 19 à 23 jamais "
@@ -246,8 +277,23 @@ def _key_figures(row: pd.Series) -> str:
             f"Cartons : {_plural(yellow, 'jaune')}, {_plural(red, 'rouge')}")
 
 
+def _window_lines(row: pd.Series) -> list[str]:
+    """Carte en mode 3 saisons : saisons jouées (dernière saison si absent de la saison choisie),
+    puis une ligne par saison jouée, "2023-24 · Bordeaux-Bègles · 20 matchs · 1324 min"."""
+    seasons = row.get("seasons") or []
+    played = f"A joué {int(row['seasons_played'])} saison" + ("s" if row["seasons_played"] >= 2 else "")
+    played += f" sur {schema.WINDOW_SEASONS}"
+    if seasons and seasons[-1][0] != row["season"]:
+        played += f" (dernière : {seasons[-1][0]})"
+    return [played] + [f"{s} · {club} · {_plural(games, 'match')} · {minutes} min"
+                       for s, club, games, minutes in seasons]
+
+
 def radar_card_lines(row: pd.Series) -> list[str]:
-    """Lignes de la carte d'un joueur sous son nom et sa saison (texte brut, échappé par la page)."""
+    """Lignes de la carte d'un joueur sous son nom et sa saison (texte brut, échappé par la page).
+    En mode 3 saisons (colonne window_label) : poste de la fenêtre signalé s'il diffère de celui
+    de la saison choisie, saisons jouées et une ligne par saison à la place des clubs."""
+    window = isinstance(row.get("window_label"), str)
     position = row["position_group"]
     if row.get("position_source") == SOURCE_BENCH:
         position += ", poste déduit du maillot de banc"
@@ -255,8 +301,14 @@ def radar_card_lines(row: pd.Series) -> list[str]:
         position += ", poste mixte"
     if isinstance(row.get("secondary_positions"), str) and row["secondary_positions"]:
         position += f" (aussi : {row['secondary_positions']})"
+    season_position = row.get("season_position_group")
+    if window and isinstance(season_position, str) and season_position != row["position_group"]:
+        position += (f" ; poste calculé sur les {schema.WINDOW_SEASONS} saisons ({row['season']} : "
+                     f"{season_position})")
     lines = [position]
-    if isinstance(row.get("clubs"), str) and row["clubs"]:
+    if window:
+        lines += _window_lines(row)
+    elif isinstance(row.get("clubs"), str) and row["clubs"]:
         lines.append(f"Clubs : {row['clubs']}")
     games = int(row["games_played"])
     play = [_plural(int(row["starts"]), "titularisation")]
@@ -267,7 +319,8 @@ def radar_card_lines(row: pd.Series) -> list[str]:
     lines.append(" · ".join(play))
     lines.append(_key_figures(row))
     if not row["radar_reference"]:
-        lines.append(f"Échantillon court : {_plural(games, 'match')}, "
+        over = f" sur {schema.WINDOW_SEASONS} saisons" if window else ""
+        lines.append(f"Échantillon court{over} : {_plural(games, 'match')}, "
                      f"{row['minutes_total']:.0f} min (hors population de référence)")
     return lines
 

@@ -79,6 +79,9 @@ class TestAxesFor(unittest.TestCase):
 
     def test_textes_sans_tiret_cadratin(self):
         texts = [radar.RADAR_REFERENCE_CAPTION, radar.FEW_AXES_NOTE, *radar.RADAR_CAVEATS,
+                 radar.WINDOW_NOTE, radar.RADAR_MODE_HELP,
+                 *(radar.window_status(c, s)[1] or "" for c in schema.COMPETITION_SPECS
+                   for s in schema.season_labels(c)),
                  *radar.RADAR_EXTRA_HELP, *radar.RADAR_EXTRA_HELP.values()]
         texts += [a["label"] for a in radar.RADAR_AXES] + [a["help"] for a in radar.RADAR_AXES]
         for c in combinations(POSITION_GROUPS, 3):
@@ -298,6 +301,60 @@ class TestVraisCaches(unittest.TestCase):
             und = df["position_group"] == UNDETERMINED
             self.assertTrue(df.loc[und, "radar_tackles_score"].isna().all())
             self.assertTrue(df.loc[~und & (df["minutes_total"] > 0), "radar_tackles_score"].notna().all())
+
+
+def _window_row(**kw):
+    detail = [("2023-24", "Toulon", 20, 1100), ("2024-25", "Toulon", 18, 900),
+              ("2025-26", "Pau", 15, 700)]
+    base = dict(window_label="2023-24 à 2025-26", season="2025-26", seasons_played=3,
+                seasons=detail, season_position_group=PROP, games_played=53, starts=40)
+    base.update(kw)
+    return _row(**base)
+
+
+class TestFenetre(unittest.TestCase):
+    def test_disponibilite(self):
+        self.assertEqual(radar.window_status("top14", "2025-26"), ("2023-24 à 2025-26", None))
+        self.assertEqual(radar.window_status("prod2", "2024-25"), ("2022-23 à 2024-25", None))
+        label, why = radar.window_status("top14", "2022-23")
+        self.assertIsNone(label)
+        self.assertEqual(why, "Mode 3 saisons indisponible pour 2022-23 : il faudrait les saisons "
+                              "2020-21 à 2022-23 de la même source, et les données Top 14 commencent "
+                              "en 2021-22.")
+        self.assertIn("2021-22 à 2023-24", radar.window_status("prod2", "2023-24")[1])
+        self.assertIn("compétitions de club", radar.window_status("six_nations", "2026")[1])
+
+    def test_carte_trois_saisons(self):
+        lines = radar.radar_card_lines(_window_row())
+        self.assertEqual(lines[:5], ["Pilier", "A joué 3 saisons sur 3",
+                                     "2023-24 · Toulon · 20 matchs · 1100 min",
+                                     "2024-25 · Toulon · 18 matchs · 900 min",
+                                     "2025-26 · Pau · 15 matchs · 700 min"])
+        self.assertFalse([l for l in lines if l.startswith("Clubs :")])
+
+    def test_carte_absent_de_la_saison_choisie(self):
+        row = _window_row(seasons_played=1, seasons=[("2023-24", "Toulon", 9, 600)],
+                          season_position_group=None, radar_reference=False, games_played=9,
+                          minutes_total=600.0)
+        lines = radar.radar_card_lines(row)
+        self.assertEqual(lines[0], "Pilier")
+        self.assertEqual(lines[1], "A joué 1 saison sur 3 (dernière : 2023-24)")
+        self.assertEqual(lines[-1], "Échantillon court sur 3 saisons : 9 matchs, 600 min "
+                                    "(hors population de référence)")
+
+    def test_poste_de_la_fenetre_different(self):
+        lines = radar.radar_card_lines(_window_row(position_group=FLANKER,
+                                                   season_position_group=LOCK))
+        self.assertEqual(lines[0], "Troisième ligne aile ; poste calculé sur les 3 saisons "
+                                   "(2025-26 : Deuxième ligne)")
+
+    def test_note_sous_le_radar(self):
+        df = _players().assign(window_label="2023-24 à 2025-26")
+        out = radar.compute_radar_scores(df, competition="top14")
+        notes = radar.radar_notes(out, [PROP])
+        self.assertIn(radar.WINDOW_NOTE.format(window="2023-24 à 2025-26"), notes)
+        self.assertFalse([n for n in radar.radar_notes(radar.compute_radar_scores(
+            _players(), competition="top14"), [PROP]) if n.startswith("Mode 3 saisons")])
 
 
 if __name__ == "__main__":

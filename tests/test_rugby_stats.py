@@ -75,6 +75,40 @@ class LectureTest(unittest.TestCase):
                 stats.get_player_stats("2024-25", competition="top14")
 
 
+class FenetreTest(unittest.TestCase):
+    def test_lecture_des_fenetres(self):
+        for comp, season in (("top14", "2025-26"), ("top14", "2023-24"), ("prod2", "2024-25")):
+            for period in schema.PERIODS:
+                with self.subTest(comp=comp, season=season, period=period):
+                    one = stats.get_player_stats(season, period=period, competition=comp)
+                    df = stats.get_player_stats(season, period=period, competition=comp, window=3)
+                    self.assertGreater(len(df), len(one))
+                    self.assertTrue(set(one["player_uid"]) <= set(df["player_uid"]))
+                    self.assertTrue((df["season"] == season).all())
+                    self.assertNotIn("_schema_version", df.columns)
+                    for m in stats.METRICS.values():
+                        self.assertIn(m.key, df.columns)
+                    self.assertFalse(df["player_label"].duplicated().any())
+
+    def test_detail_par_saison_avec_noms_affiches(self):
+        df = stats.get_player_stats("2025-26", competition="top14", window=3).set_index("player_uid")
+        self.assertEqual([s[:2] for s in df.at["icw:101948", "seasons"]],   # Madosh Tambwe
+                         [("2023-24", "Bordeaux-Bègles"), ("2024-25", "Montpellier"),
+                          ("2025-26", "Bordeaux-Bègles")])
+        self.assertNotIn("seasons", stats.get_player_stats("2025-26", competition="top14").columns)
+
+    def test_fenetre_indisponible(self):
+        with self.assertRaises(ValueError):
+            stats.get_player_stats("2022-23", competition="top14", window=3)
+        with self.assertRaises(ValueError):
+            stats.get_player_stats("2025-26", competition="top14", window=2)
+
+    def test_cache_de_fenetre_absent(self):
+        with mock.patch.object(schema, "RUGBY_WINDOW_SCHEMA_VERSION", 999):
+            with self.assertRaisesRegex(FileNotFoundError, "--comp top14 --windows-only"):
+                stats.get_player_stats("2025-26", competition="top14", window=3)
+
+
 class NomsDeJoueursTest(unittest.TestCase):
     def test_une_graphie_par_joueur(self):
         """Nom, prénom et nom de famille identiques sur toutes les saisons des deux compétitions

@@ -160,6 +160,37 @@ def processed_path(competition: str, season: str, period: str = "all",
     return base / competition / f"{season}{suffix}.parquet"
 
 
+# Mode "3 saisons" du radar (chantier E) : la saison choisie et les 2 précédentes, même compétition.
+# Une compétition n'a qu'une source (CompetitionSpec.source) : une fenêtre ne mélange donc jamais
+# deux sources. Club seulement.
+WINDOW_SEASONS = 3
+
+
+def window_seasons(competition: str, season: str) -> list[str] | None:
+    """Libellés des WINDOW_SEASONS saisons de la fenêtre qui finit à `season`, de la plus ancienne à
+    la plus récente, ou None si la fenêtre n'existe pas (saison trop ancienne pour avoir ses 2
+    précédentes dans le périmètre, saison inconnue, compétition internationale)."""
+    spec = COMPETITION_SPECS[competition]
+    labels = season_labels(competition)  # la plus récente en premier, consécutives
+    if spec.mode != CLUB or season not in labels:
+        return None
+    window = labels[labels.index(season):labels.index(season) + WINDOW_SEASONS]
+    return window[::-1] if len(window) == WINDOW_SEASONS else None
+
+
+def window_path(competition: str, season: str, period: str = "all",
+                root: Path | None = None) -> Path:
+    """data_cache/processed/rugby/<compétition>/<saison>_3saisons[_regular].parquet : une ligne par
+    joueur de la fenêtre qui finit à `season`. Lève ValueError si la fenêtre n'existe pas."""
+    if window_seasons(competition, season) is None:
+        raise ValueError(f"Pas de fenêtre de {WINDOW_SEASONS} saisons pour {competition} {season}")
+    if period not in PERIODS:
+        raise ValueError(f"Période inconnue : {period!r} (attendu : {', '.join(PERIODS)})")
+    base = RUGBY_PROCESSED_DIR if root is None else Path(root) / "processed" / "rugby"
+    suffix = "" if period == "all" else f"_{period}"
+    return base / competition / f"{season}_{WINDOW_SEASONS}saisons{suffix}.parquet"
+
+
 # Versions de schéma (même mécanisme que nba.PROCESSED_SCHEMA_VERSION : base.read_cache traite
 # un cache d'une autre version comme absent). Chaque montée porte un commentaire "vN : raison".
 RUGBY_RAW_TABLES_SCHEMA_VERSION = 3      # les 5 tables de RAW_TABLES, produites ensemble
@@ -172,6 +203,10 @@ RUGBY_PROCESSED_SCHEMA_VERSION = 4      # v2 : low_sample_size au seuil club cal
 # v3 : first_name et last_name (tri du tableau du Dashboard par nom de famille puis prénom).
 # v4 : par 80 stat par stat sur les matchs à minutes > 0 ; club principal = le plus de minutes ;
 # clubs_detail ; position_share (badge "poste mixte").
+# Caches des fenêtres de 3 saisons (window_path) : colonnes de la table traitée, plus window_label,
+# window_start, window_end, seasons_played, season_detail et season_position_group
+# (aggregate.aggregate_window). À reconstruire aussi quand RUGBY_PROCESSED_SCHEMA_VERSION monte.
+RUGBY_WINDOW_SCHEMA_VERSION = 1
 
 # --- Seuils et radar (calibration : scripts/rugby_calibrate.py, rugby_notes/calibration_v1.md) ---
 # Population de référence du radar et badge "échantillon court" : (matchs joués, minutes).

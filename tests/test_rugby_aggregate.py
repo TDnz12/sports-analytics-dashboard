@@ -1,6 +1,7 @@
 """Agrégation par saison (data_sources/rugby/aggregate.py) sur une mini-saison construite à la main :
 2 équipes, 3 matchs (2 de phase régulière, 1 phase finale). Club principal par les minutes, clubs_detail,
 par 80 sur les seuls matchs à minutes > 0 où la stat est connue (décisions B.2, B.3 et C4 de l'audit).
+Fenêtre de 3 saisons (aggregate_window, mode 3 saisons du radar) sur 3 mini-saisons.
 
 Lancer depuis la racine du projet : .venv/bin/python -m unittest discover -s tests -t .
 """
@@ -14,7 +15,7 @@ import pandas as pd
 
 from data_sources.base import COMMON_COLUMNS
 from data_sources.rugby import schema
-from data_sources.rugby.aggregate import aggregate_season
+from data_sources.rugby.aggregate import aggregate_season, aggregate_window
 
 A, B = "icw:1", "icw:2"
 
@@ -47,6 +48,12 @@ def mini_season():
         ("icw:101", A, "icw:60", "Leroy", 7, 80, {"tackles": 8, "carries": 4}),
         ("icw:102", A, "icw:60", "Leroy", 7, 40, {"tackles": np.nan, "carries": 2}),   # stat inconnue
     ]
+    return build_tables(matches, rows)
+
+
+def build_tables(matches, rows):
+    """Tables brutes (matches, lineups, player_match) depuis des lignes (match, équipe, joueur,
+    nom, maillot, minutes, stats particulières)."""
     lineups, pm = [], []
     for match, team, player, name, jersey, minutes, stats in rows:
         lineups.append({"match_uid": match, "team_uid": team, "player_uid": player,
@@ -149,6 +156,89 @@ class AggregateTest(unittest.TestCase):
         self.assertEqual(self.all.loc["icw:11", "position_source"], "banc")
         self.assertTrue(self.all["low_sample_size"].all())     # personne n'a 5 matchs
         self.assertTrue(self.all["height_cm"].isna().all())
+
+
+def mini_window():
+    """3 saisons de 2 matchs Alpha-Beta. icw:70 : Alpha, puis Beta, puis Alpha (un seul match sur
+    2 en 2025-26). icw:71 : deuxième ligne en 2023-24, absent en 2024-25, troisième ligne aile en
+    2025-26. icw:72 : seulement en 2024-25."""
+    seasons = {}
+    rows_by_season = {
+        "2023-24": [("1", A, "icw:70", "Garcia", 9, 80, {"tackles": 10}),
+                    ("2", A, "icw:70", "Garcia", 9, 80, {"tackles": 6}),
+                    ("1", A, "icw:71", "Moreau", 4, 80, {}),
+                    ("2", A, "icw:71", "Moreau", 4, 80, {})],
+        "2024-25": [("1", B, "icw:70", "Garcia", 9, 80, {"tackles": 4}),
+                    ("2", B, "icw:70", "Garcia", 9, 40, {"tackles": 2}),
+                    ("1", B, "icw:72", "Simon", 10, 80, {})],
+        "2025-26": [("1", A, "icw:70", "Garcia", 9, 60, {"tackles": 3}),
+                    ("1", A, "icw:71", "Moreau", 6, 80, {})],
+    }
+    for i, (season, rows) in enumerate(rows_by_season.items()):
+        year = 2023 + i
+        uid = lambda n: f"icw:{year}{n}"
+        matches = pd.DataFrame({
+            "match_uid": [uid("1"), uid("2")], "season": season,
+            "date_utc": pd.to_datetime([f"{year}-09-01", f"{year + 1}-03-01"], utc=True),
+            "phase": "regular", "home_team_uid": [A, B], "home_team": ["Alpha", "Beta"],
+            "away_team_uid": [B, A], "away_team": ["Beta", "Alpha"],
+        })
+        seasons[season] = build_tables(matches, [(uid(r[0]),) + r[1:] for r in rows])
+    return seasons
+
+
+class WindowTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.seasons = mini_window()
+        cls.win = aggregate_window(cls.seasons, "top14").set_index("player_uid")
+
+    def test_saison_choisie_et_fenetre(self):
+        self.assertTrue((self.win["season"] == "2025-26").all())
+        self.assertTrue((self.win["window_label"] == "2023-24 à 2025-26").all())
+        self.assertEqual((self.win["window_start"].iloc[0], self.win["window_end"].iloc[0]),
+                         ("2023-24", "2025-26"))
+        self.assertEqual(set(self.win.index), {"icw:70", "icw:71", "icw:72"})
+
+    def test_sommes_puis_division(self):
+        g = self.win.loc["icw:70"]
+        self.assertEqual((g["games_played"], g["minutes_total"], g["tackles"]), (5, 340, 25))
+        self.assertAlmostEqual(g["tackles_per80"], 25 / 340 * 80)
+        per_season = [aggregate_season(t, "top14").set_index("player_uid") for t in self.seasons.values()]
+        for col in ("games_played", "starts", "matchday_squads", "minutes_total", "tackles"):
+            summed = sum(d[col].reindex(self.win.index).fillna(0) for d in per_season)
+            pd.testing.assert_series_equal(summed, self.win[col].astype(float), check_names=False)
+
+    def test_disponibilite_saison_par_saison(self):
+        # Alpha 2 + Beta 2 + Alpha 1 (premier et dernier match de 2025-26 confondus) = 5 ; d'un
+        # seul tenant sur la fenêtre, les 2 matchs d'Alpha en 2024-25 seraient comptés en plus.
+        g = self.win.loc["icw:70"]
+        self.assertEqual(g["team_matches_span"], 5)
+        self.assertAlmostEqual(g["availability"], 1.0)
+        self.assertEqual(self.win.loc["icw:71", "team_matches_span"], 3)
+
+    def test_club_et_poste_sur_la_fenetre(self):
+        g = self.win.loc["icw:70"]                      # 220 min avec Alpha, 120 avec Beta
+        self.assertEqual(g["team_uid"], A)
+        m = self.win.loc["icw:71"]                      # 2 titularisations en 4, 1 en 6
+        self.assertEqual(m["position_group"], "Deuxième ligne")
+        self.assertEqual(m["season_position_group"], "Troisième ligne aile")
+        self.assertIsNone(self.win.loc["icw:72", "season_position_group"])   # absent en 2025-26
+
+    def test_detail_par_saison(self):
+        self.assertEqual(self.win.loc["icw:70", "seasons_played"], 3)
+        self.assertEqual(json.loads(self.win.loc["icw:70", "season_detail"]),
+                         [["2023-24", A, "Alpha", 2, 160], ["2024-25", B, "Beta", 2, 120],
+                          ["2025-26", A, "Alpha", 1, 60]])
+        self.assertEqual(self.win.loc["icw:71", "seasons_played"], 2)
+        self.assertEqual(json.loads(self.win.loc["icw:72", "season_detail"]),
+                         [["2024-25", B, "Beta", 1, 80]])
+
+    def test_une_saison_inchangee(self):
+        # Une fenêtre d'une seule saison redonne aggregate_season (même calcul).
+        one = aggregate_window({"2025-26": mini_season()}, "top14")
+        ref = aggregate_season(mini_season(), "top14")
+        pd.testing.assert_frame_equal(one[ref.columns], ref)
 
 
 if __name__ == "__main__":

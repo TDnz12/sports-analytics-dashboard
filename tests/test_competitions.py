@@ -113,6 +113,24 @@ class CheminsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             schema.processed_path("top14", "2024-25", "playoffs")
 
+    def test_fenetres_de_3_saisons(self):
+        self.assertEqual(schema.window_seasons("top14", "2025-26"), ["2023-24", "2024-25", "2025-26"])
+        self.assertEqual(schema.window_seasons("top14", "2023-24"), ["2021-22", "2022-23", "2023-24"])
+        self.assertEqual(schema.window_seasons("prod2", "2024-25"), ["2022-23", "2023-24", "2024-25"])
+        available = {comp: [s for s in schema.season_labels(comp) if schema.window_seasons(comp, s)]
+                     for comp in schema.COMPETITION_SPECS}
+        self.assertEqual(available, {"top14": ["2025-26", "2024-25", "2023-24"],
+                                     "prod2": ["2025-26", "2024-25"], "six_nations": []})
+        self.assertIsNone(schema.window_seasons("top14", "2019-20"))
+        self.assertEqual(schema.window_path("top14", "2025-26"),
+                         CACHE_ROOT / "processed" / "rugby" / "top14" / "2025-26_3saisons.parquet")
+        self.assertEqual(schema.window_path("prod2", "2024-25", "regular", root=Path("/tmp/essai")),
+                         Path("/tmp/essai/processed/rugby/prod2/2024-25_3saisons_regular.parquet"))
+        for args in (("top14", "2022-23"), ("prod2", "2023-24"), ("six_nations", "2026"),
+                     ("top14", "2025-26", "playoffs")):
+            with self.assertRaises(ValueError):
+                schema.window_path(*args)
+
     def test_json_hors_du_depot(self):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("RUGBY_JSON_DIR", None)

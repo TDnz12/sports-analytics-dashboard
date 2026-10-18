@@ -15,7 +15,11 @@ par joueur, même contrat que la NBA (COMMON_COLUMNS) plus les colonnes propres 
   calculés au moment du radar (lot 6), avec les seuils fixés par la calibration.
 - Poste : calculé sur la saison complète (positions.py), identique pour les deux périodes.
 - Disponibilité : matchs sur la feuille / matchs de son équipe entre son premier et son dernier
-  match sur la feuille (somme par club s'il en a changé en cours de saison).
+  match sur la feuille (somme par club s'il en a changé en cours de saison, et par saison sur une
+  fenêtre de plusieurs saisons).
+- Fenêtre de plusieurs saisons (mode 3 saisons du radar, aggregate_window) : tables brutes des
+  saisons mises bout à bout, mêmes calculs (sommes puis division, poste et club principal sur la
+  fenêtre), plus le détail saison par saison.
 - Âge, taille, poids : NaN en Top 14 et Pro D2 (profils InCrowd abandonnés, décision 11).
 """
 
@@ -57,17 +61,21 @@ def _team_names(matches: pd.DataFrame) -> dict:
 
 def _team_matches_span(squad: pd.DataFrame, matches: pd.DataFrame) -> pd.Series:
     """Par joueur : nombre de matchs de son (ses) équipe(s), dans la période, entre son premier et
-    son dernier match sur la feuille avec cette équipe."""
+    son dernier match sur la feuille avec cette équipe, saison par saison : sur une fenêtre de
+    plusieurs saisons, un club quitté puis retrouvé ne compte pas les matchs joués entre-temps."""
+    cols = ["team_uid", "date_utc", "season"]
     team_games = pd.concat([
-        matches[["home_team_uid", "date_utc"]].set_axis(["team_uid", "date_utc"], axis=1),
-        matches[["away_team_uid", "date_utc"]].set_axis(["team_uid", "date_utc"], axis=1),
+        matches[["home_team_uid", "date_utc", "season"]].set_axis(cols, axis=1),
+        matches[["away_team_uid", "date_utc", "season"]].set_axis(cols, axis=1),
     ])
-    dates_by_team = {t: np.sort(g["date_utc"].values) for t, g in team_games.groupby("team_uid")}
-    spans = squad.groupby(["player_uid", "team_uid"])["date_utc"].agg(["min", "max"]).reset_index()
+    dates = {k: np.sort(g["date_utc"].values) for k, g in team_games.groupby(["team_uid", "season"])}
+    spans = (squad.groupby(["player_uid", "team_uid", "season"])["date_utc"]
+             .agg(["min", "max"]).reset_index())
     spans["n"] = [
-        int(np.searchsorted(dates_by_team[t], hi, side="right")
-            - np.searchsorted(dates_by_team[t], lo, side="left"))
-        for t, lo, hi in zip(spans["team_uid"], spans["min"].values, spans["max"].values)
+        int(np.searchsorted(dates[(t, s)], hi, side="right")
+            - np.searchsorted(dates[(t, s)], lo, side="left"))
+        for t, s, lo, hi in zip(spans["team_uid"], spans["season"], spans["min"].values,
+                                spans["max"].values)
     ]
     return spans.groupby("player_uid")["n"].sum()
 
@@ -101,7 +109,7 @@ def aggregate_season(tables: dict[str, pd.DataFrame], competition: str,
     keep = set(matches["match_uid"])
     squad = (tables["lineups"][tables["lineups"]["match_uid"].isin(keep)]
              .merge(tables["player_match"], on=["match_uid", "team_uid", "player_uid"], how="left")
-             .merge(matches[["match_uid", "date_utc"]], on="match_uid", how="left"))
+             .merge(matches[["match_uid", "date_utc", "season"]], on="match_uid", how="left"))
     squad["goals_made"] = squad["conversions_made"] + squad["penalty_goals_made"]
     squad["tackle_attempts"] = squad["tackles"] + squad["missed_tackles"]
 
@@ -149,7 +157,7 @@ def aggregate_season(tables: dict[str, pd.DataFrame], competition: str,
     out["player_label"] = out["player"].where(~dup, out["player"] + " (" + out["team"] + ")")
     out["sport"] = "rugby"
     out["competition"] = competition
-    out["season"] = all_matches["season"].iloc[0]
+    out["season"] = all_matches.sort_values("date_utc")["season"].iloc[-1]   # la plus récente
 
     head = ["sport", "season", "player", "team", "competition", "player_uid", "player_label",
             "first_name", "last_name",
@@ -160,3 +168,37 @@ def aggregate_season(tables: dict[str, pd.DataFrame], competition: str,
     rest = [c for c in out.columns if c not in head and c != "low_sample_size"]
     out = out[head + rest + ["low_sample_size"]]
     return out.sort_values(["team", "player"]).reset_index(drop=True)
+
+
+def aggregate_window(seasons: dict[str, dict[str, pd.DataFrame]], competition: str,
+                     period: str = "all") -> pd.DataFrame:
+    """Une ligne par joueur présent sur au moins une feuille de match de la fenêtre. `seasons` :
+    {libellé : tables brutes de la saison}, de la plus ancienne à la plus récente (la dernière est
+    la saison choisie). aggregate_season sur les tables mises bout à bout (season = la saison
+    choisie), plus :
+    - window_label ("2023-24 à 2025-26"), window_start, window_end ;
+    - seasons_played : saisons avec au moins un match joué ;
+    - season_detail : JSON [[saison, team_uid, nom source, matchs joués, minutes], ...] de ces
+      saisons, dans l'ordre chronologique (club principal de la saison, même règle que _clubs) ;
+    - season_position_group : poste de la saison choisie (None si absent de cette saison), pour
+      signaler sur la carte un poste de fenêtre différent."""
+    labels = list(seasons)
+    tables = {t: pd.concat([seasons[s][t] for s in labels], ignore_index=True)
+              for t in ("matches", "lineups", "player_match")}
+    out = aggregate_season(tables, competition, period)
+    per_season = {s: aggregate_season(seasons[s], competition, period).set_index("player_uid")
+                  for s in labels}
+    detail = {uid: [] for uid in out["player_uid"]}
+    for s in labels:
+        played = per_season[s][per_season[s]["games_played"] > 0]
+        for uid, r in played.iterrows():
+            detail[uid].append([s, r["team_uid"], r["team"], int(r["games_played"]),
+                                int(round(r["minutes_total"]))])
+    out["window_label"] = f"{labels[0]} à {labels[-1]}"
+    out["window_start"], out["window_end"] = labels[0], labels[-1]
+    out["seasons_played"] = out["player_uid"].map(lambda u: len(detail[u])).astype(int)
+    out["season_detail"] = out["player_uid"].map(
+        lambda u: json.dumps(detail[u], ensure_ascii=False))
+    last = per_season[labels[-1]]["position_group"]
+    out["season_position_group"] = out["player_uid"].map(last).replace({np.nan: None})
+    return out

@@ -327,6 +327,46 @@ est ainsi fiable pour chacun. Une note apparaît sous 5 axes en commun.
 Restent hors radar, dans le tableau et la fiche du joueur : pénalités concédées et ballons perdus
 par 80 (« peu fiable sur une saison »), franchissements, essais, % au pied.
 
+## Radar sur 3 saisons
+
+Sur la page Radar, le choix « Durée » passe de 1 saison (par défaut) à 3 saisons : la saison
+choisie et les 2 précédentes, dans la même compétition. Une fenêtre ne mélange jamais deux
+sources. Le choix est grisé, avec la raison, quand les 3 saisons n'existent pas :
+
+| Compétition | Fenêtres disponibles | Indisponible |
+|---|---|---|
+| Top 14 | 2023-24, 2024-25, 2025-26 | 2021-22, 2022-23 |
+| Pro D2 | 2024-25, 2025-26 | 2022-23, 2023-24 |
+
+**Calcul.** Les stats sont additionnées match par match sur les 3 saisons, puis divisées : par 80
+minutes = somme des totaux / somme des minutes x 80, pourcentages = somme des réussis / somme des
+tentatives. Jamais de moyenne des 3 saisons. Exemple, Léo Barré : 130 plaquages en 4 746 minutes,
+soit 2,19 par 80 minutes ; la moyenne des 3 saisons (2,44, 1,84, 2,23) donnerait 2,17. Les
+totaux de chaque fenêtre sont contrôlés : ils égalent, pour tous les joueurs, la somme des 3
+saisons (matchs, minutes, plaquages, mètres...).
+
+**Référence.** Les joueurs du poste sur la même fenêtre, avec les mêmes seuils : au moins 5 matchs
+et 520 minutes au total. En Top 14 2023-24 à 2025-26, saison complète, la référence passe de 381
+joueurs (2025-26 seule) à 641. Sur les 244 joueurs de 2025-26 en échantillon court, 122 y
+entrent sur 3 saisons. Axes, padding (P), seuils NC et M inchangés : les axes restent ceux de la
+règle des 0,4 sur une saison.
+
+**Poste, club, disponibilité.** Poste principal et club principal sont calculés sur la fenêtre, avec
+les mêmes règles que sur une saison. Le poste peut donc différer de celui de la saison choisie (40
+joueurs en Top 14 2025-26 : Paul Boudehent, deuxième ligne en 2025-26, troisième ligne aile sur 3
+saisons) ; la carte le signale. La disponibilité est comptée saison par saison : un joueur parti
+puis revenu dans un club ne se voit pas compter les matchs du club pendant son absence. Une saison
+entière sans match n'entre pas dans le calcul.
+
+**Joueurs proposés.** Tous ceux de la fenêtre, y compris ceux qui n'ont pas joué la saison choisie,
+comme la population de référence. La carte donne les saisons jouées (« A joué 2 saisons sur 3
+(dernière : 2024-25) ») et une ligne par saison (club, matchs, minutes). Une fenêtre Top 14 ne
+compte que les matchs de Top 14 : les saisons passées en Pro D2 n'y sont pas.
+
+**Affichage.** La fenêtre est écrite dans le titre, sur les cartes et sur le radar lui-même. Sur la
+carte d'un joueur en échantillon court, un bouton « Voir sur 3 saisons » passe la page en mode 3
+saisons en gardant les joueurs choisis.
+
 ## Pourcentages ajustés et « NC »
 
 Même méthode que la NBA (padding) : `(réussis + P x moyenne de référence) / (tentatives + P)`.

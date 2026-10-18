@@ -416,6 +416,81 @@ choisir(at, PLAYERS, FOUR[:1] + ["Luka Dončić"])
 assert at.session_state["radar_players"] == ["Shai Gilgeous-Alexander", "Luka Dončić"]
 ok("NBA : placeholder « ex. doncic », Luka Dončić ajouté")
 
+# R14. Mode 3 saisons (chantier E) : choix « Durée » en rugby seulement, 1 saison par défaut,
+# grisé avec sa raison sans fenêtre ; en 3 saisons, fenêtre dans le titre, les cartes et sur le
+# radar, recherche sur tous les joueurs de la fenêtre ; bouton « Voir sur 3 saisons ».
+def radio(at, label):
+    return next((r for r in at.radio if r.label == label), None)
+
+
+def card_texts(at):
+    return [m.value for m in at.markdown if "border-left: 4px solid" in m.value]
+
+
+TAUZIN, BOUDEHENT, CALLANDRET = "icw:210898", "icw:216116", "icw:157983"
+win = rugby_radar.compute_radar_scores(rugby_stats("2025-26", competition="top14", window=3))
+assert win.set_index("player_uid").at[CALLANDRET, "player"] == "Aurélien Callandret"
+at = new()
+assert radio(at, "Durée") is None
+at = new({"selected_sport": "rugby", "radar_players": [TAUZIN]})
+assert not at.exception, at.exception
+assert radio(at, "Durée").value == "1 saison" and not radio(at, "Durée").disabled
+assert at.title[0].value == "Radar de comparaison · Top 14 · 2025-26"
+assert "Échantillon court : 9 matchs, 519 min" in card_texts(at)[0]
+assert not spec(at)["layout"].get("annotations")
+ok("Durée : absente en NBA, « 1 saison » par défaut en rugby, pas de repère sur le radar")
+
+# Bouton de la carte en échantillon court : passe en 3 saisons, garde le joueur
+(see,) = [b for b in at.button if b.label == "Voir sur 3 saisons"]
+see.click().run()
+assert not at.exception, at.exception
+assert radio(at, "Durée").value == "3 saisons" and shown(at) == [TAUZIN]
+assert at.title[0].value == "Radar de comparaison · Top 14 · 2023-24 à 2025-26 (3 saisons)", at.title[0].value
+card = card_texts(at)[0]
+assert "2023-24 à 2025-26 (3 saisons) · Saison complète (phases finales incluses) · 38 matchs" in card, card
+assert ">A joué 3 saisons sur 3<" in card and ">2025-26 · Clermont · 9 matchs · 519 min<" in card, card
+assert "Échantillon court" not in card and not [b for b in at.button if b.label == "Voir sur 3 saisons"]
+(note,) = spec(at)["layout"]["annotations"]
+assert note["text"] == "<b>3 saisons</b> · 2023-24 à 2025-26", note
+caps = [c.value for c in at.caption]
+assert any(c.startswith("Mode 3 saisons (2023-24 à 2025-26) : totaux additionnés") for c in caps), caps
+assert any(c.startswith("Joueurs de référence : Ailier 81 joueurs") for c in caps), caps
+assert len(traces(at)) == 1 and not traces(at, "sans_tentative")
+ok("« Voir sur 3 saisons » : Lucas Tauzin gardé, 38 matchs, fenêtre au titre, sur la carte et sur le radar")
+
+# Recherche : tous les joueurs de la fenêtre, y compris absents de 2025-26 ; carte d'un absent
+eligible_w = win[(win["games_played"] > 0) & win["radar_eligible"]]
+assert len(labels_of(at)) == len(eligible_w)
+assert CALLANDRET in {k for k, _ in picker_data(at, PLAYERS)["options"]}
+choisir(at, PLAYERS, [TAUZIN, CALLANDRET, BOUDEHENT])
+assert not at.exception, at.exception
+_, callandret, boudehent = card_texts(at)
+assert ">A joué 2 saisons sur 3 (dernière : 2024-25)<" in callandret, callandret
+assert "poste calculé sur les 3 saisons (2025-26 : Deuxième ligne)" in boudehent, boudehent
+assert ">Troisième ligne aile" in boudehent
+ok(f"recherche sur les {len(eligible_w)} joueurs de la fenêtre (Callandret, absent en 2025-26), poste de Boudehent")
+
+# Aucun tiret cadratin en 3 saisons
+assert not [t for t in all_texts(at) if "—" in t]
+
+# Saison sans fenêtre : ramenée à 1 saison, choix grisé et raison
+select(at, "Saison").set_value("2022-23").run()
+assert not at.exception, at.exception
+assert radio(at, "Durée").value == "1 saison" and radio(at, "Durée").disabled
+assert any(c.value.startswith("Mode 3 saisons indisponible pour 2022-23 : il faudrait les saisons 2020-21 à "
+                              "2022-23") for c in at.caption)
+assert at.title[0].value == "Radar de comparaison · Top 14 · 2022-23"
+at = new({"selected_sport": "rugby", "selected_competition": "prod2", "radar_season": "2023-24"})
+assert radio(at, "Durée").disabled and any("données Pro D2 commencent en 2022-23" in c.value for c in at.caption)
+ok("Top 14 2022-23 et Pro D2 2023-24 : Durée grisée sur 1 saison, avec la raison")
+
+# Présélection du Dashboard : revient sur 1 saison
+at = new({"radar_window": "3 saisons", "radar_preselect_player": TAUZIN, "radar_preselect_label": "Lucas Tauzin",
+          "radar_preselect_sport": "rugby", "radar_preselect_competition": "top14",
+          "radar_preselect_season": "2025-26", "radar_preselect_period": "all"})
+assert not at.exception and radio(at, "Durée").value == "1 saison" and shown(at) == [TAUZIN]
+ok("présélection du Dashboard : 1 saison")
+
 # R13. Données partielles : bandeau visible quand get_player_stats signale un manque (attrs).
 # SPORTS["nba"] remplacé le temps du contrôle, restauré même en cas d'échec.
 import dataclasses

@@ -18,6 +18,7 @@ from .positions import POSITION_GROUPS, UNDETERMINED
 from .radar import (
     RADAR_AXES, RADAR_CAVEATS, RADAR_EXTRA_HELP, RADAR_MODE_HELP, RADAR_REFERENCE_CAPTION,
     compute_radar_scores, radar_axes_for, radar_card_lines, radar_extra_columns, radar_notes,
+    window_status,
 )
 from .schema import COMPETITION_SPECS, season_labels
 from .stats import (

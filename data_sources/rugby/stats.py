@@ -15,7 +15,9 @@ colonnes d'affichage calculées à la lecture (pas stockées dans le cache) :
 - clubs : "Bordeaux-Bègles (10), Perpignan (4)" (matchs joués, ordre chronologique) pour un joueur
   passé par plusieurs clubs dans la saison, sinon vide ; club_names : tuple des clubs où il a joué
   (filtre équipe du Dashboard : il apparaît dans chacun) ;
-- mixed_position : poste principal sous 60 % des titularisations (positions.MIXED_POSITION_SHARE).
+- mixed_position : poste principal sous 60 % des titularisations (positions.MIXED_POSITION_SHARE) ;
+- seasons (fenêtre de 3 saisons seulement) : [(saison, club affiché, matchs joués, minutes), ...]
+  depuis season_detail, pour la carte du radar.
 """
 
 from __future__ import annotations
@@ -128,17 +130,27 @@ def player_names() -> pd.DataFrame:
 
 
 def get_player_stats(season: str, force_refresh: bool = False, period: str = "all",
-                     competition: str = "top14") -> pd.DataFrame:
+                     competition: str = "top14", window: int = 1) -> pd.DataFrame:
     """Une ligne par joueur de la compétition et de la saison (libellé, ex. "2024-25"). `period` :
-    "all" (saison complète, phases finales incluses) ou "regular". `force_refresh` est accepté
-    pour garder l'interface commune aux sports, sans effet : les caches se reconstruisent hors
-    ligne avec scripts/rugby_build.py."""
-    path = schema.processed_path(competition, season, period)
-    df = read_cache(path, schema_version=schema.RUGBY_PROCESSED_SCHEMA_VERSION)
+    "all" (saison complète, phases finales incluses) ou "regular". `window` : 1 (la saison) ou
+    schema.WINDOW_SEASONS (la saison et les 2 précédentes, mode 3 saisons du radar ; ValueError si
+    la fenêtre n'existe pas). `force_refresh` est accepté pour garder l'interface commune aux
+    sports, sans effet : les caches se reconstruisent hors ligne avec scripts/rugby_build.py."""
+    if window == 1:
+        path, version = (schema.processed_path(competition, season, period),
+                         schema.RUGBY_PROCESSED_SCHEMA_VERSION)
+    elif window == schema.WINDOW_SEASONS:
+        path, version = (schema.window_path(competition, season, period),
+                         schema.RUGBY_WINDOW_SCHEMA_VERSION)
+    else:
+        raise ValueError(f"Fenêtre de {window} saisons non prévue (1 ou {schema.WINDOW_SEASONS})")
+    df = read_cache(path, schema_version=version)
     if df is None:
+        what = f"{season}" if window == 1 else f"{window} saisons jusqu'à {season}"
+        option = "" if window == 1 else " --windows-only"
         raise FileNotFoundError(
-            f"Cache rugby absent ou ancien ({competition}, {season}, période {period}) : "
-            f"relancer scripts/rugby_build.py --comp {competition}."
+            f"Cache rugby absent ou ancien ({competition}, {what}, période {period}) : "
+            f"relancer scripts/rugby_build.py --comp {competition}{option}."
         )
     df = df.copy()
     df["team"] = df["team_uid"].map(TEAM_DISPLAY_NAMES).fillna(df["team"])
@@ -160,6 +172,10 @@ def get_player_stats(season: str, force_refresh: bool = False, period: str = "al
     df["clubs"] = named.map(lambda d: ", ".join(f"{name} ({n})" for name, n in d) if len(d) > 1 else None)
     df["mixed_position"] = ((df["position_source"] == SOURCE_STARTER)
                             & (df["position_share"] < MIXED_POSITION_SHARE))
+    if "season_detail" in df.columns:
+        df["seasons"] = df["season_detail"].map(json.loads).map(
+            lambda d: [(s, TEAM_DISPLAY_NAMES.get(uid, name), games, minutes)
+                       for s, uid, name, games, minutes in d])
     return df
 
 

@@ -18,6 +18,12 @@ défaut, la page reprend le sport et la compétition choisis en dernier, ici ou 
 de même pour la saison (selected_season, partagée aussi avec Effectifs). Les réglages propres au sport (axes selon les postes, carte,
 colonnes hors radar, notes) sont des champs optionnels de SportConfig ; absents, rendu NBA
 historique.
+
+Mode 3 saisons (rugby, sport.radar_window_status) : choix "1 saison / 3 saisons" sous la période,
+1 saison par défaut, grisé avec sa raison quand la fenêtre n'existe pas. En 3 saisons, la table
+chargée est celle de la fenêtre (joueurs, référence, recherche), et la fenêtre est écrite dans le
+titre, les cartes et sur le radar lui-même. Bouton "Voir sur 3 saisons" sur la carte d'un joueur en
+échantillon court.
 """
 
 from __future__ import annotations
@@ -263,6 +269,29 @@ elif st.session_state.get("radar_period") not in _period_labels:
     st.session_state["radar_period"] = _period_labels[0]
 stats_period_label = st.sidebar.selectbox("Statistiques utilisées", options=_period_labels, key="radar_period")
 stats_period = STATS_PERIOD_OPTIONS[stats_period_label]
+
+# Durée (rugby, mode 3 saisons) : key= comme la saison. 1 saison par défaut et à l'arrivée depuis le
+# bouton du Dashboard (qui montre une saison) ; ramenée à 1 saison quand la fenêtre n'existe pas
+# (saison trop ancienne), le choix restant visible, grisé, avec sa raison.
+DURATIONS = ["1 saison", "3 saisons"]
+window_label = None
+if sport.radar_window_status:
+    _window, _window_why = sport.radar_window_status(competition_key, season)
+    if (preselected_player or _window is None
+            or st.session_state.get("radar_window") not in DURATIONS):
+        st.session_state["radar_window"] = DURATIONS[0]
+    _duration = st.sidebar.radio(
+        "Durée", options=DURATIONS, key="radar_window", horizontal=True, disabled=_window is None,
+        help="3 saisons : la saison choisie et les 2 précédentes, même compétition. Totaux "
+             "additionnés puis divisés par les minutes ; joueurs de référence sur la même fenêtre.",
+    )
+    if _window is None:
+        st.sidebar.caption(_window_why)
+    elif _duration == DURATIONS[1]:
+        window_label = _window
+window = 3 if window_label else 1
+# Saison ou fenêtre dans les textes : "2025-26", ou "2023-24 à 2025-26 (3 saisons)".
+season_txt = f"{window_label} (3 saisons)" if window_label else season
 # Période après la saison dans les textes : entre parenthèses, sauf si son libellé en contient déjà
 # (rugby : "Saison complète (phases finales incluses)"), alors séparée par un point médian.
 period_txt = f"· {stats_period_label}" if "(" in stats_period_label else f"({stats_period_label})"
@@ -271,8 +300,11 @@ period_txt = f"· {stats_period_label}" if "(" in stats_period_label else f"({st
 # La compétition fait partie de la clé de cache (None pour la NBA, dont get_player_stats ne reçoit
 # alors aucun argument competition), même principe que Dashboard.py. Texte du chargement propre au
 # sport (sport.loading_label), d'où st.cache_data appliqué ici plutôt qu'en décorateur.
-def _get_player_stats(sport_key: str, competition_key: str | None, season: str, period: str) -> pd.DataFrame:
+def _get_player_stats(sport_key: str, competition_key: str | None, season: str, period: str,
+                      window: int = 1) -> pd.DataFrame:
     kwargs = {"competition": competition_key} if competition_key else {}
+    if window > 1:
+        kwargs["window"] = window
     return SPORTS[sport_key].get_player_stats(season, force_refresh=False, period=period, **kwargs)
 
 
@@ -281,15 +313,15 @@ load_data = st.cache_data(
 )(_get_player_stats)
 
 try:
-    df = load_data(sport.key, competition_key, season, stats_period)
+    df = load_data(sport.key, competition_key, season, stats_period, window)
 except Exception as exc:
-    st.error(f"Impossible de charger les données pour {season} : {exc}")
+    st.error(f"Impossible de charger les données pour {season_txt} : {exc}")
     st.stop()
 if (msg := incomplete_data_warning(df, season)):
     st.warning(msg)
 
 if df.empty:
-    st.warning(f"Aucune donnée disponible pour {season}.")
+    st.warning(f"Aucune donnée disponible pour {season_txt}.")
     st.stop()
 
 # period=stats_period : la population de référence du z-score/percentile (voir docstring de
@@ -332,7 +364,7 @@ def _option_label(key) -> str:
 
 
 if not player_options:
-    st.warning(f"Aucun joueur avec des données exploitables pour {season} {period_txt}.")
+    st.warning(f"Aucun joueur avec des données exploitables pour {season_txt} {period_txt}.")
     st.stop()
 
 MAX_PLAYERS = 4
@@ -382,14 +414,14 @@ if preselected_player and preselected_player not in player_options:
         )
     else:
         st.info(
-            f"**{preselected_label}** n'a pas de données exploitables pour {season} "
+            f"**{preselected_label}** n'a pas de données exploitables pour {season_txt} "
             f"{period_txt} : sélectionne une autre saison ou un autre joueur."
         )
 
 # Compétition (rugby) ou, à défaut, sport (NBA) : « Radar de comparaison · NBA · 2024-25 ».
 st.title(" · ".join(["Radar de comparaison"]
                     + ([competition.label] if competition else [sport.short_label or sport.label])
-                    + [season]))
+                    + [season_txt]))
 
 # Toggle Indice / Centile (inspiré de Data'Scout) : les deux lisent les colonnes déjà calculées
 # par compute_radar_scores (radar_<key>_score / radar_<key>_percentile), même référence (poste +
@@ -444,7 +476,13 @@ def _player_row(player_key) -> pd.Series | None:
 # héritée du thème Streamlit (currentColor) pour rester lisible en clair comme en sombre, sans
 # pouvoir détecter le thème réel du visiteur côté Python (voir plus bas pour la même contrainte
 # sur le fond du radar). Lignes en plus selon le sport (sport.radar_card_lines, rugby : poste,
-# titularisations, cartons, échantillon court), aucune en NBA.
+# titularisations, cartons, échantillon court), aucune en NBA. En 1 saison, un joueur hors
+# référence (échantillon court) a un bouton "Voir sur 3 saisons" quand la fenêtre existe : il passe
+# la page en 3 saisons et garde la sélection (mêmes identifiants, la fenêtre contient la saison).
+def _see_window() -> None:
+    st.session_state["radar_window"] = DURATIONS[1]
+
+
 def _player_card(column, player_key, color: str) -> None:
     row = _player_row(player_key)
     player_name = row[label_col] if row is not None else player_key
@@ -464,10 +502,14 @@ def _player_card(column, player_key, color: str) -> None:
         st.markdown(
             f"""<div style="border-left: 4px solid {color}; padding: 0.3rem 0.9rem;">
             <div style="font-weight: 600; font-size: 1.05rem;">{player_name}</div>
-            <div style="opacity: 0.7; font-size: 0.85rem;">{season} {period_txt} · {games_txt}</div>{extra}
+            <div style="opacity: 0.7; font-size: 0.85rem;">{season_txt} {period_txt} · {games_txt}</div>{extra}
             </div>""",
             unsafe_allow_html=True,
         )
+        if (sport.radar_window_status and _window and not window_label and row is not None
+                and not row.get("radar_reference", True)):
+            st.button("Voir sur 3 saisons", key=f"radar_see_window_{player_key}",
+                      on_click=_see_window, help=f"Même joueur sur {_window}.")
 
 
 if players:
@@ -543,7 +585,7 @@ show_text = len(players) <= MAX_PLAYERS_WITH_TEXT
 for i, player_key in enumerate(players):
     row = _player_row(player_key)
     if row is None:
-        st.info(f"**{_option_label(player_key)}** ne correspond à aucune donnée pour {season} {period_txt}.")
+        st.info(f"**{_option_label(player_key)}** ne correspond à aucune donnée pour {season_txt} {period_txt}.")
         continue
     player_name = row[label_col]
     scores = [row.get(f"radar_{a['key']}{score_suffix}") for a in axes]
@@ -692,6 +734,15 @@ fig.update_layout(
     legend=dict(orientation="h", yref="container", yanchor="top", y=1, xanchor="left", x=0),
     margin=dict(t=LEGEND_HEIGHT + 30 + AXIS_LABEL_GAP, b=60, l=150, r=150),
 )
+# Mode 3 saisons écrit sur le radar lui-même : coin bas droit, poussé dans la marge de droite
+# (coin vide, le radar étant rond ; la légende est en haut à gauche). Une capture d'écran du seul
+# graphique dit toujours de quoi il s'agit.
+if window_label:
+    fig.add_annotation(
+        text=f"<b>3 saisons</b> · {window_label}", xref="paper", yref="paper", x=1, y=0,
+        xshift=140, xanchor="right", yanchor="bottom", showarrow=False,
+        font=dict(color=POLAR_AXIS_COLOR, size=13), name="fenetre",
+    )
 st.plotly_chart(fig, width="stretch")
 
 # Début propre au sport (sport.radar_reference_caption, rugby : 10 postes et seuil de référence),

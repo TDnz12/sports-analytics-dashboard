@@ -18,7 +18,7 @@ Dashboard interactif de stats de joueurs, construit avec Streamlit, pour deux sp
 
 - Top 14 de 2021-22 à 2025-26, Pro D2 de 2022-23 à 2025-26, en saison complète (phases finales comprises) ou en phase régulière
 - Dashboard : nuage de points entre deux stats au choix (totaux, par 80 minutes, pourcentages), filtres par équipe et par poste, vue toutes saisons
-- Radar de comparaison par poste, jusqu'à 4 joueurs, avec des axes choisis selon leur fiabilité
+- Radar de comparaison par poste, jusqu'à 4 joueurs, avec des axes choisis selon leur fiabilité, sur 1 saison ou sur 3 saisons (la saison choisie et les 2 précédentes, totaux additionnés)
 - La page Effectifs n'existe que pour la NBA
 
 ### Recherche de joueurs
@@ -95,6 +95,7 @@ Les stats de match viennent du flux InCrowd (rugbyviz) du Top 14 et du Pro D2 : 
 ```bash
 PYTHONPATH=. python scripts/rugby_download.py incrowd --comp top14   # JSON bruts, dans ~/rugby_raw_json (hors du dépôt)
 PYTHONPATH=. python scripts/rugby_build.py --comp top14              # tables brutes et caches traités, avec un rapport de contrôle
+PYTHONPATH=. python scripts/rugby_build.py --comp top14 --windows-only   # caches sur 3 saisons seuls, depuis les tables déjà construites
 ```
 
 Même chose avec `--comp prod2`, puis on commite les fichiers de `data_cache/`. Le dossier des JSON peut être changé avec la variable d'environnement `RUGBY_JSON_DIR`.

@@ -161,6 +161,10 @@ class SportConfig:
     radar_reference_caption: Optional[str] = None
     # Aide du choix "Mode d'affichage" (Indice / Centile) ; None = texte NBA.
     radar_mode_help: Optional[str] = None
+    # radar_window_status(compétition, saison) -> (libellé de la fenêtre ou None, raison) : choix
+    # "1 saison / 3 saisons" de la page (rugby, chantier E), grisé avec la raison si la fenêtre
+    # n'existe pas ; get_player_stats reçoit alors window=3. None = pas de choix (NBA).
+    radar_window_status: Optional[Callable[[str, str], tuple]] = None
 
 
 # --- Sport actif ---------------------------------------------------------
@@ -249,6 +253,7 @@ RUGBY = SportConfig(
     radar_extra_help=rugby.RADAR_EXTRA_HELP,
     radar_reference_caption=rugby.RADAR_REFERENCE_CAPTION,
     radar_mode_help=rugby.RADAR_MODE_HELP,
+    radar_window_status=rugby.window_status,
 )
 
 # --- Sports à venir (aucune implémentation, juste affichés "bientôt") ----
