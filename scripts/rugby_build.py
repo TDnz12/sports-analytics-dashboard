@@ -1,6 +1,7 @@
 """Construction hors ligne des caches rugby : JSON bruts -> tables brutes (parquet) -> une table par
 joueur et par saison (parquet), puis rapport de contrôle. Aucun accès réseau : les JSON doivent
-déjà avoir été téléchargés par scripts/rugby_download.py.
+déjà avoir été téléchargés (InCrowd : scripts/rugby_download.py ; ESPN : scripts du pilote,
+rugby_notes/pilote_espn/). Le lecteur suit la source de la saison (schema.season_source).
 
 Écrit, pour chaque saison :
     <racine>/raw/rugby/<compétition>/<saison>/{matches,lineups,player_match,events,team_match}.parquet
@@ -15,6 +16,9 @@ Usage :
     PYTHONPATH=. python scripts/rugby_build.py --comp top14
     PYTHONPATH=. python scripts/rugby_build.py --comp top14 --seasons 202501 --out-root /tmp/essai
     PYTHONPATH=. python scripts/rugby_build.py --comp top14 --windows-only   (fenêtres seules)
+    PYTHONPATH=. python scripts/rugby_build.py --comp top14 --seasons 2017-2021 --out-root /tmp/essai
+        (saisons ESPN, déclarées mais non publiées : à demander par leur id ESPN ; tables brutes
+        seules tant que leur profil n'a pas de seuils calibrés, plan_espn.md lots 3 et 4)
 """
 from __future__ import annotations
 
@@ -28,7 +32,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from data_sources.base import read_cache, write_cache  # noqa: E402
-from data_sources.rugby import schema  # noqa: E402
+from data_sources.rugby import espn, schema  # noqa: E402
 from data_sources.rugby.aggregate import aggregate_season, aggregate_window  # noqa: E402
 from data_sources.rugby.incrowd import (  # noqa: E402
     APPEARANCE_STATS, extract_season, score_gaps, scoring_check,
@@ -40,12 +44,14 @@ from data_sources.rugby.positions import POSITION_GROUPS, UNDETERMINED  # noqa: 
 
 
 def parse_seasons(competition: str, text: str | None) -> list[int]:
-    """"202101-202501", "202501" ou "202101,202301" ; défaut : toutes les saisons du périmètre,
-    de la plus ancienne à la plus récente (même syntaxe que rugby_download.py, recopiée pour ne
-    pas importer un module qui charge requests)."""
-    allowed = sorted(schema.source_season_ids(competition, schema.SOURCE_INCROWD))
+    """"202101-202501", "202501" ou "202101,202301" (ids natifs : 202501 chez InCrowd, 2021 chez
+    ESPN) ; défaut : toutes les saisons publiées, de la plus ancienne à la plus récente (même
+    syntaxe que rugby_download.py, recopiée pour ne pas importer un module qui charge requests).
+    Une saison déclarée mais non publiée (ESPN avant le lot 5) se demande explicitement."""
+    spec = schema.COMPETITION_SPECS[competition]
+    allowed = sorted(s.season_id for s in spec.seasons)
     if not text:
-        return allowed
+        return sorted(s.season_id for s in spec.seasons if s.published)
     chosen: set[int] = set()
     for part in text.split(","):
         lo, _, hi = part.strip().partition("-")
@@ -61,15 +67,21 @@ def _fmt(x: float) -> str:
     return f"{x:,.0f}".replace(",", " ")
 
 
-def control_report(tables: dict[str, pd.DataFrame], processed: dict[str, pd.DataFrame],
+def control_report(tables: dict[str, pd.DataFrame], processed: dict[str, pd.DataFrame] | None,
                    competition: str, summary: dict | None = None) -> list[str]:
     """Lignes du rapport de contrôle d'une saison (plan, 6.3). `summary`, s'il est fourni, reçoit
-    les chiffres clés de la saison (une ligne du récapitulatif final)."""
+    les chiffres clés de la saison (une ligne du récapitulatif final). `processed` None : caches
+    traités non construits (saison ESPN avant les lots 3 et 4), section des joueurs sautée."""
     summary = {} if summary is None else summary
     spec = schema.COMPETITION_SPECS[competition]
     m, lu, pm, ev, tm = (tables[t] for t in schema.RAW_TABLES)
+    season = m["season"].iloc[0]
+    is_espn = schema.season_source(competition, season).source == schema.SOURCE_ESPN
     lines = []
     add = lines.append
+
+    if is_espn:
+        lines += espn_report(tables, competition, summary)
 
     # Matchs et feuilles
     n_final = int((m["phase"] == "final").sum())
@@ -102,8 +114,8 @@ def control_report(tables: dict[str, pd.DataFrame], processed: dict[str, pd.Data
         add(f"  {r.match_uid} {r.team_uid}")
     gaps = score_gaps(tables)
     pts_gap = gaps["gap"]
-    add(f"Points : somme des joueurs + 7 x essais de pénalité = score officiel pour "
-        f"{int((pts_gap == 0).sum())}/{len(gaps)} équipes-matchs "
+    add(f"Points : somme des joueurs + {schema.penalty_try_points(season)} x essais de pénalité = "
+        f"score officiel pour {int((pts_gap == 0).sum())}/{len(gaps)} équipes-matchs "
         f"({int(gaps['penalty_tries'].sum())} essais de pénalité)")
     for r in gaps[pts_gap != 0].itertuples():
         add(f"  Écart restant, source gardée (le recomptage ne redonne pas le score) : {r.match_uid} "
@@ -121,8 +133,12 @@ def control_report(tables: dict[str, pd.DataFrame], processed: dict[str, pd.Data
     missed_ev = ev[ev["type"] == "penalty_missed"].groupby(["match_uid", "team_uid"]).size()
     mp = tm.set_index(["match_uid", "team_uid"])["penalty_goals_missed"]
     mp_ok = (mp.sub(missed_ev.reindex(mp.index).fillna(0)) == 0).sum()
-    add(f"Pénalités manquées : événements = total équipe pour {int(mp_ok)}/{len(mp)} équipes-matchs "
-        f"({int(missed_ev.sum())} événements, {int(mp.sum())} au total équipe)")
+    if mp.notna().any():
+        add(f"Pénalités manquées : événements = total équipe pour {int(mp_ok)}/{len(mp)} "
+            f"équipes-matchs ({int(missed_ev.sum())} événements, {int(mp.sum())} au total équipe)")
+    else:
+        add("Pénalités manquées : non fournies par la source")
+        mp_ok = len(mp)
 
     # Minutes
     rebuilt = reconstruct_minutes(lu, ev, m)
@@ -140,11 +156,14 @@ def control_report(tables: dict[str, pd.DataFrame], processed: dict[str, pd.Data
         f"max {_fmt(per_match[~m['extra_time'].values].max())} (référence 2 400)")
     switched = pm[pm["minutes_method"] != "source"].drop_duplicates(["match_uid", "team_uid"])
     switched_extra = switched["match_uid"].isin(m.loc[m["extra_time"], "match_uid"])
-    add(f"Minutes reconstruites à la place de la source : {len(switched)} équipe(s)-match(s) "
-        f"({int(switched_extra.sum())} en prolongation, {int((~switched_extra).sum())} parce que la "
-        f"source sort de la tolérance et la reconstruction y rentre)")
-    for r in switched[~switched_extra.values].itertuples():
-        add(f"  {r.match_uid} {r.team_uid}")
+    if is_espn:
+        add("Minutes : toutes reconstruites depuis les plays (aucune minute chez ESPN)")
+    else:
+        add(f"Minutes reconstruites à la place de la source : {len(switched)} équipe(s)-match(s) "
+            f"({int(switched_extra.sum())} en prolongation, {int((~switched_extra).sum())} parce "
+            f"que la source sort de la tolérance et la reconstruction y rentre)")
+        for r in switched[~switched_extra.values].itertuples():
+            add(f"  {r.match_uid} {r.team_uid}")
     add(f"Contrôle 15 x durée - exclusions (cartons d'après les événements), tolérance "
         f"{TEAM_TOLERANCE_MIN:.0f} min, après ce choix : {int(check['ok'].sum())}/{len(check)} "
         f"équipes-matchs dans la tolérance ; écart médian {check['gap_min'].median():+.1f} min")
@@ -159,11 +178,15 @@ def control_report(tables: dict[str, pd.DataFrame], processed: dict[str, pd.Data
         rebuilt, on=["match_uid", "player_uid"])
     diff = cmp["minutes_rebuilt"] - cmp["minutes"]
     valid = diff.notna()
-    add(f"Validation croisée (minutes reconstruites depuis les événements contre minutesPlayedTotal, "
-        f"{len(cmp)} lignes en minutes source) : "
-        f"{(diff[valid].abs() <= 1).mean():.1%} des lignes à 1 minute près (objectif 95 %), "
-        f"{(diff[valid] == 0).mean():.1%} exactes, {int((~valid).sum())} ligne(s) incohérente(s), "
-        f"{int((diff[valid].abs() > 5).sum())} écart(s) de plus de 5 min")
+    if len(cmp):
+        add(f"Validation croisée (minutes reconstruites depuis les événements contre "
+            f"minutesPlayedTotal, {len(cmp)} lignes en minutes source) : "
+            f"{(diff[valid].abs() <= 1).mean():.1%} des lignes à 1 minute près (objectif 95 %), "
+            f"{(diff[valid] == 0).mean():.1%} exactes, {int((~valid).sum())} ligne(s) "
+            f"incohérente(s), {int((diff[valid].abs() > 5).sum())} écart(s) de plus de 5 min")
+    else:
+        add("Validation croisée des minutes : sans objet (aucune minute fournie par la source, "
+            "toutes reconstruites)")
 
     # Minutes inconnues, lignes "a joué" sans minute, compteurs de score (décisions B.3 et B.0 de
     # l'audit). Nom du joueur : celui de sa feuille de match.
@@ -201,6 +224,17 @@ def control_report(tables: dict[str, pd.DataFrame], processed: dict[str, pd.Data
         add(f"  {who(r)} : compteurs {r.points_counters:.0f} pts, événements {r.points_events:.0f} pts, "
             f"source {r.points:.0f} pts")
 
+    summary.update({
+        "matchs": len(m), "finales": n_final, "prolong.": len(extra),
+        "score recompté": len(recounted), "écarts points": int((pts_gap != 0).sum()),
+        "écarts pén. manq.": int(len(mp) - mp_ok),
+        "minutes reconstr.": len(switched), "hors tol. minutes": int((~check["ok"]).sum()),
+    })
+    if processed is None:
+        add("Joueurs et postes : caches traités non construits (pas de seuils calibrés pour le "
+            f"profil {schema.calibration_profile(competition, season)}, plan_espn.md lots 3 et 4)")
+        return lines
+
     # Joueurs et postes
     full = processed["all"]
     played = full[full["games_played"] > 0]
@@ -234,10 +268,6 @@ def control_report(tables: dict[str, pd.DataFrame], processed: dict[str, pd.Data
     add(f"Homonymes (libellé « Nom (Club) ») : {len(homonyms)}")
 
     summary.update({
-        "matchs": len(m), "finales": n_final, "prolong.": len(extra),
-        "score recompté": len(recounted), "écarts points": int((pts_gap != 0).sum()),
-        "écarts pén. manq.": int(len(mp) - mp_ok),
-        "minutes reconstr.": len(switched), "hors tol. minutes": int((~check["ok"]).sum()),
         "joueurs": len(full),
         "au-dessus seuil": int((~full["low_sample_size"]).sum()),
         "Indét. au-dessus": len(und_ok),
@@ -245,22 +275,64 @@ def control_report(tables: dict[str, pd.DataFrame], processed: dict[str, pd.Data
     return lines
 
 
+def espn_report(tables: dict[str, pd.DataFrame], competition: str, summary: dict) -> list[str]:
+    """Début du rapport d'une saison ESPN : matchs listés, exclus (espn_exclusions.csv) et
+    construits, critères C3 et C4 du lot A recalculés (nouvel écart signalé, jamais exclu
+    automatiquement), stats d'un joueur rendues inconnues (valeur négative)."""
+    m = tables["matches"]
+    season = m["season"].iloc[0]
+    season_id = schema.season_id(competition, season)
+    listed = espn.season_match_ids(competition, season_id)
+    excluded = espn.read_exclusions(competition, season)
+    lines = [f"Source ESPN : {len(listed)} matchs listés (dont "
+             f"{len(espn.ESPN_EXTRA_EVENTS.get((competition, season_id), ()))} ajoutés à la liste "
+             f"ESPN), {len(excluded)} exclus (espn_exclusions.csv), {len(m)} construits"]
+    for match_id, cause in excluded.items():
+        lines.append(f"  Exclu : espn:{match_id} {cause}")
+    checks = espn.coverage_checks(tables)
+    bad = checks[~(checks["c3"] & checks["c4"])]
+    lines.append(f"Critères du lot A recalculés : C3 (stats, points) {int(checks['c3'].sum())}/"
+                 f"{len(checks)}, C4 (minutes) {int(checks['c4'].sum())}/{len(checks)} ; "
+                 f"nouvel écart : {len(bad)} match(s)")
+    for r in bad.itertuples():
+        lines.append(f"  Nouvel écart (gardé, à trancher) : {r.match_uid} C3 {r.c3} (écart de points "
+                     f"{r.gap_points:+.0f}), C4 {r.c4} (écart de minutes {r.gap_minutes:.0f})")
+    pm = tables["player_match"]
+    stats = [c for c in schema.PLAYER_MATCH_STAT_COLUMNS if c in pm]
+    negative = pm[(pm[stats] < 0).any(axis=1)]
+    names = tables["lineups"].set_index(["match_uid", "player_uid"])["player_name"]
+    lines.append(f"Valeurs négatives gardées (corrections d'ESPN, le total de l'équipe en dépend) : "
+                 f"{len(negative)} ligne(s)")
+    for r in negative.itertuples():
+        values = ", ".join(f"{c} {getattr(r, c):.0f}" for c in stats if getattr(r, c) < 0)
+        lines.append(f"  {r.match_uid} {names.get((r.match_uid, r.player_uid), r.player_uid)} : {values}")
+    lines.append(f"Tentatives au but inconnues (kickPercentSuccess sans nombre entier possible) : "
+                 f"{int(pm['goal_attempts'].isna().sum())} ligne(s) ; rien de réussi et "
+                 f"kickPercentSuccess à 0 (0 tentative retenue) : voir l'ajout B de plan_espn.md")
+    summary.update({"listés": len(listed), "exclus": len(excluded), "nouv. écarts": len(bad)})
+    return lines
+
+
 def build_season(competition: str, season_id: int, out_root: Path | None,
                  json_root: Path | None = None, summary: dict | None = None) -> list[str]:
     label = schema.season_label(competition, season_id)
-    tables = extract_season(competition, season_id, json_root)
+    reader = (espn.extract_season if schema.season_source(competition, label).source == schema.SOURCE_ESPN
+              else extract_season)
+    tables = reader(competition, season_id, json_root)
     for name, df in tables.items():
         write_cache(df, schema.raw_table_path(competition, label, name, root=out_root),
                     schema_version=schema.RUGBY_RAW_TABLES_SCHEMA_VERSION)
+    spec = schema.COMPETITION_SPECS[competition]
+    title = [f"=== {spec.label} {label} ==="]
+    if schema.calibration_profile(competition, label) not in schema.SAMPLE_THRESHOLDS:
+        return title + control_report(tables, None, competition, summary)
     processed = {}
     for period in schema.PERIODS:
         processed[period] = aggregate_season(tables, competition, period)
         write_cache(processed[period],
                     schema.processed_path(competition, label, period, root=out_root),
                     schema_version=schema.RUGBY_PROCESSED_SCHEMA_VERSION)
-    spec = schema.COMPETITION_SPECS[competition]
-    return ([f"=== {spec.label} {label} ==="]
-            + control_report(tables, processed, competition, summary))
+    return title + control_report(tables, processed, competition, summary)
 
 
 # Totaux comparés, dans le contrôle d'une fenêtre, à la somme des caches saison par saison.
@@ -347,7 +419,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     incrowd = schema.competitions_with_source(schema.SOURCE_INCROWD)
     parser.add_argument("--comp", required=True, choices=incrowd)
-    parser.add_argument("--seasons", help="ids InCrowd, ex. 202501 ou 202101-202501 (défaut : toutes)")
+    parser.add_argument("--seasons", help="ids natifs, ex. 202501 ou 202101-202501 (InCrowd), "
+                                           "2017-2021 (ESPN) ; défaut : toutes les saisons publiées")
     parser.add_argument("--out-root", type=Path, help="racine de sortie à la place de data_cache/")
     parser.add_argument("--windows-only", action="store_true",
                         help="seulement les fenêtres de 3 saisons, depuis les tables déjà construites")

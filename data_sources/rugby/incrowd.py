@@ -264,12 +264,12 @@ def use_rebuilt_minutes_where_better(tables: dict[str, pd.DataFrame]) -> dict[st
     return {**tables, "player_match": pm.drop(columns="minutes_rebuilt")}
 
 
-# Points par action de score. L'essai de pénalité (7 points) revient à l'équipe, jamais à un joueur
-# (vérifié : points des joueurs + 7 x essais de pénalité = score).
+# Points par action de score. L'essai de pénalité revient à l'équipe, jamais à un joueur (vérifié :
+# points des joueurs + 7 x essais de pénalité = score ; 5 points jusqu'en 2016-17,
+# schema.penalty_try_points).
 SCORE_POINTS = {"try": 5, "conversion": 2, "penalty_goal": 3, "drop_goal": 3}
 SCORE_COLUMNS = {"try": "tries", "conversion": "conversions_made",
                  "penalty_goal": "penalty_goals_made", "drop_goal": "drop_goals_made"}
-PENALTY_TRY_POINTS = 7
 
 
 def official_scores(matches: pd.DataFrame) -> pd.DataFrame:
@@ -283,8 +283,9 @@ def official_scores(matches: pd.DataFrame) -> pd.DataFrame:
 
 
 def score_gaps(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """Par équipe-match : score officiel, points des joueurs, essais de pénalité (événements) et
-    écart = score - (points des joueurs + 7 x essais de pénalité)."""
+    """Par équipe-match : score officiel, points des joueurs, essais de pénalité (événements),
+    points d'un essai de pénalité la saison du match (penalty_try_points : 7, ou 5 jusqu'en
+    2016-17) et écart = score - (points des joueurs + penalty_try_points x essais de pénalité)."""
     key = ["match_uid", "team_uid"]
     ev = tables["events"]
     pt = ev[ev["type"] == "penalty_try"].groupby(key).size().rename("penalty_tries")
@@ -292,13 +293,15 @@ def score_gaps(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
     out = (official_scores(tables["matches"]).merge(players.reset_index(), on=key, how="left")
            .merge(pt.reset_index(), on=key, how="left"))
     out["penalty_tries"] = out["penalty_tries"].fillna(0)
-    out["gap"] = out["score"] - out["player_points"] - PENALTY_TRY_POINTS * out["penalty_tries"]
+    seasons = tables["matches"].set_index("match_uid")["season"]
+    out["penalty_try_points"] = out["match_uid"].map(seasons).map(schema.penalty_try_points)
+    out["gap"] = out["score"] - out["player_points"] - out["penalty_try_points"] * out["penalty_tries"]
     return out
 
 
 def rebuild_scoring_from_events(tables: dict[str, pd.DataFrame]) -> tuple[dict[str, pd.DataFrame],
                                                                            pd.DataFrame]:
-    """Équipes-matchs où la source a perdu une partie du score (points des joueurs + 7 x essais de
+    """Équipes-matchs où la source a perdu une partie du score (points des joueurs + essais de
     pénalité différents du score officiel ; 16 cas sur les 9 saisons, surtout en Pro D2 2023-24 et
     2024-25, où les essais et buts manquent aussi dans les stats de l'équipe alors que les
     événements sont complets) : essais, transformations, pénalités réussies, drops et points de
@@ -328,7 +331,7 @@ def rebuild_scoring_from_events(tables: dict[str, pd.DataFrame]) -> tuple[dict[s
     recount = counts.groupby(level=key)["points"].sum().rename("recount_points").reset_index()
     todo = todo.merge(recount, on=key, how="left")
     todo["recount_points"] = todo["recount_points"].fillna(0)
-    todo["applied"] = (todo["recount_points"] + PENALTY_TRY_POINTS * todo["penalty_tries"]
+    todo["applied"] = (todo["recount_points"] + todo["penalty_try_points"] * todo["penalty_tries"]
                        == todo["score"])
     applied = todo.loc[todo["applied"], key]
     if applied.empty:

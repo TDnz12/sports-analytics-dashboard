@@ -1,14 +1,20 @@
 """Reconstruction des minutes depuis les événements (data_sources/rugby/minutes.py), cas du plan
 (6.1) plus la prolongation et le rouge de 20 minutes. Temps en minutes dans les tests (x 60).
+Cas ESPN (seule source des minutes chez ESPN) : un vrai match, Grenoble-Castres 2016-17
+(tests/fixtures/rugby/espn_290386.json.gz).
 
 Lancer depuis la racine du projet : .venv/bin/python -m unittest discover -s tests -t .
 """
 
+import gzip
+import json
 import math
 import unittest
+from pathlib import Path
 
 import pandas as pd
 
+from data_sources.rugby import espn
 from data_sources.rugby.minutes import (
     player_minutes, reconstruct_minutes, t80_seconds, team_minutes_check,
 )
@@ -131,6 +137,25 @@ class TeamCheckTest(unittest.TestCase):
         check = team_minutes_check(rebuilt.rename(columns={"minutes_rebuilt": "minutes"}),
                                    rebuilt, matches).iloc[0]
         self.assertEqual((check["minutes_sum"], check["expected_min"]), (1500, 1500))
+
+
+class EspnTest(unittest.TestCase):
+    def test_match_reel(self):
+        """Saseras (Castres) entre à 71:24 et prend un jaune à 73:10 : 2 minutes ; Kockott, jaune à
+        30:02 (10 minutes retirées) puis remplacé à 53:43 : 44 minutes. Sommes des deux équipes
+        dans la tolérance."""
+        path = Path(__file__).resolve().parent / "fixtures" / "rugby" / "espn_290386.json.gz"
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            d = json.load(f)
+        t = espn.extract_match(d["summary"], d["plays"], "top14")
+        rebuilt = reconstruct_minutes(t["lineups"], t["events"], t["matches"])
+        by_name = rebuilt.merge(t["lineups"], on=["match_uid", "team_uid", "player_uid"]).set_index(
+            "player_name")["minutes_rebuilt"]
+        self.assertEqual((by_name["Lilian Saseras"], by_name["Rory Kockott"]), (2.0, 44.0))
+        check = team_minutes_check(rebuilt.rename(columns={"minutes_rebuilt": "minutes"}), rebuilt,
+                                   t["matches"])
+        self.assertTrue(check["ok"].all())
+        self.assertEqual(sorted(check["minutes_sum"]), [1190.0, 1193.0])
 
 
 if __name__ == "__main__":

@@ -151,6 +151,14 @@ def season_id(competition: str, label: str) -> int:
     return season_source(competition, label).season_id
 
 
+def penalty_try_points(season: str) -> int:
+    """Points d'un essai de pénalité la saison `season` (libellé) : 5 jusqu'en 2016-17 et au Six
+    Nations 2017, la transformation accordée d'office étant alors créditée au buteur ; 7 ensuite
+    (règle de World Rugby à partir de juillet 2017 ; vérifié sur les scores ESPN au lot A)."""
+    end_year = int(season[:4]) + 1 if "-" in season else int(season)
+    return 5 if end_year <= 2017 else 7
+
+
 def source_season_ids(competition: str, source: str) -> list[int]:
     """Ids natifs des saisons fournies par `source` (publiées ou non), la plus récente en premier."""
     return [s.season_id for s in COMPETITION_SPECS[competition].seasons if s.source == source]
