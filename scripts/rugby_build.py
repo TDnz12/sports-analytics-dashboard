@@ -43,7 +43,7 @@ def parse_seasons(competition: str, text: str | None) -> list[int]:
     """"202101-202501", "202501" ou "202101,202301" ; défaut : toutes les saisons du périmètre,
     de la plus ancienne à la plus récente (même syntaxe que rugby_download.py, recopiée pour ne
     pas importer un module qui charge requests)."""
-    allowed = sorted(schema.COMPETITION_SPECS[competition].season_ids)
+    allowed = sorted(schema.source_season_ids(competition, schema.SOURCE_INCROWD))
     if not text:
         return allowed
     chosen: set[int] = set()
@@ -204,7 +204,7 @@ def control_report(tables: dict[str, pd.DataFrame], processed: dict[str, pd.Data
     # Joueurs et postes
     full = processed["all"]
     played = full[full["games_played"] > 0]
-    min_games, min_minutes = schema.SAMPLE_THRESHOLDS[spec.mode]
+    min_games, min_minutes = schema.SAMPLE_THRESHOLDS[schema.calibration_profile(competition, full["season"].iloc[0])]
     add(f"Joueurs : {len(full)} sur au moins une feuille, {len(played)} avec au moins un match joué ; "
         f"phase régulière : {len(processed['regular'])}")
     add(f"Minutes : {_fmt(full['minutes_total'].sum())} au total ; joueurs au-dessus du seuil du "
@@ -345,7 +345,7 @@ def build_windows(competition: str, out_root: Path | None, touched: list[str] | 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    incrowd = [k for k, s in schema.COMPETITION_SPECS.items() if s.source == schema.SOURCE_INCROWD]
+    incrowd = schema.competitions_with_source(schema.SOURCE_INCROWD)
     parser.add_argument("--comp", required=True, choices=incrowd)
     parser.add_argument("--seasons", help="ids InCrowd, ex. 202501 ou 202101-202501 (défaut : toutes)")
     parser.add_argument("--out-root", type=Path, help="racine de sortie à la place de data_cache/")

@@ -45,8 +45,10 @@ def _pct(value: float) -> str:
     return f"{value * 100:.0f} %"
 
 
-_MIN_GAMES, _MIN_MINUTES = schema.SAMPLE_THRESHOLDS[schema.CLUB]
-_PAD = schema.PCT_PADDING[schema.CLUB]
+# Textes et axes du radar : réglages du club InCrowd (profil CLUB_ICW), seules saisons publiées
+# en club. Ils dépendront du profil de la saison au lot 5 du plan ESPN (saisons ESPN publiées).
+_MIN_GAMES, _MIN_MINUTES = schema.SAMPLE_THRESHOLDS[schema.CLUB_ICW]
+_PAD = schema.PCT_PADDING[schema.CLUB_ICW]
 
 _HELP = {
     "tackles": "Plaquages réussis par 80 minutes de jeu.",
@@ -130,11 +132,21 @@ def window_status(competition: str, season: str) -> tuple[str | None, str | None
     spec = schema.COMPETITION_SPECS[competition]
     if spec.mode != schema.CLUB:
         return None, "Mode 3 saisons réservé aux compétitions de club (Top 14, Pro D2)."
-    first = schema.season_labels(competition)[-1]
-    year = int(season[:4]) - (schema.WINDOW_SEASONS - 1)
-    start = f"{year}-{str(year + 1)[-2:]}"
-    return None, (f"Mode 3 saisons indisponible pour {season} : il faudrait les saisons {start} à "
-                  f"{season} de la même source, et les données {spec.label} commencent en {first}.")
+    published = schema.season_labels(competition)
+    first = published[-1]
+    window = schema.window_candidates(competition, season)
+    start = window[0]
+    if start < first:
+        return None, (f"Mode 3 saisons indisponible pour {season} : il faudrait les saisons {start} "
+                      f"à {season} de la même source, et les données {spec.label} commencent en "
+                      f"{first}.")
+    missing = [s for s in window if s not in published]
+    if missing:
+        return None, (f"Mode 3 saisons indisponible pour {season} : la saison "
+                      f"{', '.join(missing)} n'est pas couverte par les données {spec.label}.")
+    return None, (f"Mode 3 saisons indisponible pour {season} : les saisons {start} à {season} "
+                  "viennent de deux sources différentes (ESPN, puis InCrowd), qui ne comptent pas "
+                  "les stats de la même façon.")
 
 
 WINDOW_NOTE = (
@@ -172,14 +184,15 @@ def compute_radar_scores(df: pd.DataFrame, period: str = "all",
     - radar_reference (dans la population de référence) et radar_eligible (a un poste).
     `period` est accepté pour l'interface commune : les seuils du rugby ne dépendent pas de la
     période (la table `df` est déjà celle de la période choisie)."""
-    mode = schema.COMPETITION_SPECS[competition].mode
-    min_games, min_minutes = schema.SAMPLE_THRESHOLDS[mode]
+    seasons = df["season"].dropna().unique() if "season" in df.columns else []
+    profile = schema.calibration_profile(competition, seasons[0] if len(seasons) == 1 else None)
+    min_games, min_minutes = schema.SAMPLE_THRESHOLDS[profile]
     result = df.copy()
     has_position = result["position_group"].isin(POSITION_GROUPS)
     result["radar_eligible"] = has_position
     result["radar_reference"] = (has_position & (result["games_played"] >= min_games)
                                  & (result["minutes_total"] >= min_minutes))
-    for adj, (made, attempts, padding, min_attempts, ref) in schema.PCT_PADDING.get(mode, {}).items():
+    for adj, (made, attempts, padding, min_attempts, ref) in schema.PCT_PADDING.get(profile, {}).items():
         qualified = result[attempts] >= min_attempts
         if ref == schema.PADDING_REF_KICKERS:
             group = pd.Series(np.where(qualified, "buteurs", "autres"), index=result.index)
@@ -188,7 +201,7 @@ def compute_radar_scores(df: pd.DataFrame, period: str = "all",
         padded = rc.padded_pct(result.assign(_pad_group=group), made, attempts, padding,
                                group_col="_pad_group")
         result[adj] = padded.where(qualified)
-    for stat, m in schema.PER80_SHRINK_M.get(mode, {}).items():
+    for stat, m in schema.PER80_SHRINK_M.get(profile, {}).items():
         if f"{stat}_per80" in result.columns:  # absente : pas de valeur ajustée, brute seule
             result[f"{stat}_per80_adj"] = _shrunk_per80(result, stat, m)
     result = rc.score_axes(result, RADAR_AXES, result["radar_reference"])

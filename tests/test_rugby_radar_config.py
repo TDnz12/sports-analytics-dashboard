@@ -7,17 +7,17 @@ from data_sources.rugby.positions import FULLBACK, GROUP_FAMILY, POSITION_GROUPS
 
 class TestRadarConfig(unittest.TestCase):
     def test_club_thresholds(self):
-        self.assertEqual(schema.SAMPLE_THRESHOLDS[schema.CLUB], (5, 520))
+        self.assertEqual(schema.SAMPLE_THRESHOLDS[schema.CLUB_ICW], (5, 520))
 
     def test_padding_values(self):
-        club = schema.PCT_PADDING[schema.CLUB]
+        club = schema.PCT_PADDING[schema.CLUB_ICW]
         self.assertEqual({k: (v[2], v[3]) for k, v in club.items()},
                          {"tackle_pct_adj": (97, 25), "gain_line_pct_adj": (82, 20),
                           "goal_kick_pct_adj": (146, 35)})
 
     def test_nc_threshold_rule(self):
         """Minimum NC = P / 4 arrondi à 5 (poids 0,2 du joueur dans son % ajusté)."""
-        for made, att, p, nc, ref in schema.PCT_PADDING[schema.CLUB].values():
+        for made, att, p, nc, ref in schema.PCT_PADDING[schema.CLUB_ICW].values():
             self.assertEqual(nc, 5 * round(p / 4 / 5))
 
     def test_every_position_has_axes_without_duplicates(self):
@@ -37,7 +37,7 @@ class TestRadarConfig(unittest.TestCase):
         self.assertNotIn("tackle_pct", schema.RADAR_AXES_BY_POSITION[FULLBACK])
 
     def test_padded_axes_use_padding_columns(self):
-        adj = set(schema.PCT_PADDING[schema.CLUB])
+        adj = set(schema.PCT_PADDING[schema.CLUB_ICW])
         for label, stat_col, score_col, attempts_col in schema.RADAR_AXES_CLUB.values():
             if score_col is not None:
                 self.assertIn(score_col, adj, label)

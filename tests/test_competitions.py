@@ -8,6 +8,7 @@ Aucun accès réseau ni disque.
 Lancer depuis la racine du projet : .venv/bin/python -m unittest discover -s tests -t .
 """
 
+import dataclasses
 import os
 import unittest
 from pathlib import Path
@@ -140,6 +141,89 @@ class CheminsTest(unittest.TestCase):
             self.assertFalse(schema.json_dir().resolve().is_relative_to((Path.home() / "Desktop").resolve()))
         with mock.patch.dict(os.environ, {"RUGBY_JSON_DIR": "/tmp/ailleurs"}):
             self.assertEqual(str(schema.json_dir()), "/tmp/ailleurs")
+
+
+def _top14_espn_published():
+    """Top 14 avec ses saisons ESPN publiées (état visé au lot 5 du plan ESPN)."""
+    spec = schema.COMPETITION_SPECS["top14"]
+    seasons = tuple(dataclasses.replace(s, published=True) for s in spec.seasons)
+    return mock.patch.dict(schema.COMPETITION_SPECS,
+                           {"top14": dataclasses.replace(spec, seasons=seasons)})
+
+
+class SourceParSaisonTest(unittest.TestCase):
+    """« Une saison = une source » (rugby_notes/plan_espn.md, lot 1)."""
+
+    def test_top14_espn_declare_mais_non_publie(self):
+        self.assertEqual(schema.season_labels("top14", published_only=False),
+                         ["2025-26", "2024-25", "2023-24", "2022-23", "2021-22",
+                          "2020-21", "2018-19", "2017-18", "2016-17"])
+        for label, espn_id in (("2020-21", 2021), ("2018-19", 2019), ("2017-18", 2018),
+                               ("2016-17", 2017)):
+            s = schema.season_source("top14", label)
+            self.assertEqual((s.source, s.native_comp_id, s.season_id, s.published),
+                             (schema.SOURCE_ESPN, 270559, espn_id, False))
+            self.assertEqual(schema.season_label("top14", espn_id), label)
+            self.assertEqual(schema.season_id("top14", label), espn_id)
+        self.assertEqual(schema.season_source("top14", "2021-22").source, schema.SOURCE_INCROWD)
+        with self.assertRaises(ValueError):
+            schema.season_source("top14", "2019-20")   # saison arrêtée, refusée au lot A
+
+    def test_caches_constructibles_avant_publication(self):
+        self.assertEqual(schema.raw_table_path("top14", "2018-19", "matches"),
+                         CACHE_ROOT / "raw" / "rugby" / "top14" / "2018-19" / "matches.parquet")
+        self.assertEqual(schema.processed_path("top14", "2016-17", "regular"),
+                         CACHE_ROOT / "processed" / "rugby" / "top14" / "2016-17_regular.parquet")
+
+    def test_sources(self):
+        self.assertEqual(schema.source_season_ids("top14", schema.SOURCE_INCROWD),
+                         [202501, 202401, 202301, 202201, 202101])
+        self.assertEqual(schema.source_season_ids("top14", schema.SOURCE_ESPN), [2021, 2019, 2018, 2017])
+        self.assertEqual(schema.source_comp_id("top14", schema.SOURCE_INCROWD), 1002)
+        self.assertEqual(schema.source_comp_id("top14", schema.SOURCE_ESPN), 270559)
+        self.assertEqual(schema.source_comp_id("prod2", schema.SOURCE_INCROWD), 1013)
+        with self.assertRaises(ValueError):
+            schema.source_comp_id("prod2", schema.SOURCE_ESPN)
+        self.assertEqual(schema.competitions_with_source(schema.SOURCE_INCROWD), ["top14", "prod2"])
+        self.assertEqual(schema.competitions_with_source(schema.SOURCE_ESPN), ["top14", "six_nations"])
+
+    def test_profils_de_calibration(self):
+        self.assertEqual(schema.calibration_profile("top14", "2024-25"), schema.CLUB_ICW)
+        self.assertEqual(schema.calibration_profile("top14"), schema.CLUB_ICW)
+        self.assertEqual(schema.calibration_profile("top14", "2018-19"), (schema.CLUB, schema.SOURCE_ESPN))
+        self.assertEqual(schema.calibration_profile("prod2"), schema.CLUB_ICW)
+        self.assertEqual(schema.calibration_profile("six_nations", "2020"), schema.INTERNATIONAL_ESPN)
+
+    def test_fenetres_une_seule_source_et_annees_consecutives(self):
+        with _top14_espn_published():
+            self.assertEqual(schema.season_labels("top14")[-4:], ["2020-21", "2018-19", "2017-18", "2016-17"])
+            self.assertEqual(schema.window_seasons("top14", "2018-19"), ["2016-17", "2017-18", "2018-19"])
+            # 2019-20 absente : la fenêtre de 2020-21 ne saute pas le trou.
+            self.assertIsNone(schema.window_seasons("top14", "2020-21"))
+            self.assertIsNone(schema.window_seasons("top14", "2021-22"))
+            # À cheval sur ESPN (2020-21) et InCrowd.
+            self.assertIsNone(schema.window_seasons("top14", "2022-23"))
+            self.assertEqual(schema.window_seasons("top14", "2023-24"), ["2021-22", "2022-23", "2023-24"])
+            available = [s for s in schema.season_labels("top14") if schema.window_seasons("top14", s)]
+            self.assertEqual(available, ["2025-26", "2024-25", "2023-24", "2018-19"])
+
+    def test_raisons_des_fenetres_indisponibles(self):
+        from data_sources.rugby import radar
+        with _top14_espn_published():
+            self.assertEqual(radar.window_status("top14", "2018-19"), ("2016-17 à 2018-19", None))
+            for season in ("2020-21", "2021-22"):
+                self.assertEqual(radar.window_status("top14", season)[1],
+                                 f"Mode 3 saisons indisponible pour {season} : la saison 2019-20 "
+                                 "n'est pas couverte par les données Top 14.")
+            self.assertEqual(radar.window_status("top14", "2022-23")[1],
+                             "Mode 3 saisons indisponible pour 2022-23 : les saisons 2020-21 à "
+                             "2022-23 viennent de deux sources différentes (ESPN, puis InCrowd), "
+                             "qui ne comptent pas les stats de la même façon.")
+            self.assertTrue(radar.window_status("top14", "2017-18")[1].endswith(
+                "et les données Top 14 commencent en 2016-17."))
+        # Saisons ESPN non publiées : messages d'aujourd'hui inchangés.
+        self.assertTrue(radar.window_status("top14", "2022-23")[1].endswith(
+            "et les données Top 14 commencent en 2021-22."))
 
 
 class ColonnesTest(unittest.TestCase):

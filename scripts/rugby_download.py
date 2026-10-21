@@ -53,7 +53,8 @@ import requests
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from data_sources.rugby.schema import (  # noqa: E402
-    COMPETITION_SPECS, SOURCE_INCROWD, json_dir, season_label,
+    COMPETITION_SPECS, SOURCE_INCROWD, competitions_with_source, json_dir, season_label,
+    source_comp_id, source_season_ids,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -69,7 +70,7 @@ MAX_CONSECUTIVE_FAILURES = 3
 MAX_CONSECUTIVE_NOT_FOUND = 10
 LIST_SIZE = 400
 
-INCROWD_COMPS = [k for k, s in COMPETITION_SPECS.items() if s.source == SOURCE_INCROWD]
+INCROWD_COMPS = competitions_with_source(SOURCE_INCROWD)
 
 
 class FetchError(Exception):
@@ -252,14 +253,15 @@ def download_season(client: Client, report: SeasonReport, force: bool,
     montre quand même où en était la saison."""
     competition, season = report.competition, report.season
     spec = COMPETITION_SPECS[competition]
-    folder = incrowd_dir(spec.native_id, season)
+    comp_id = source_comp_id(competition, SOURCE_INCROWD)
+    folder = incrowd_dir(comp_id, season)
     list_path = folder / "list.json.gz"
 
     matches = None if (force or refresh_lists) else list_matches(read_json_gz(list_path))
     if matches is not None:
         report.list_status = "en cache"
     else:
-        url = (f"{INCROWD_BASE}/matches?provider=rugbyviz&compId={spec.native_id}"
+        url = (f"{INCROWD_BASE}/matches?provider=rugbyviz&compId={comp_id}"
                f"&season={season}&size={LIST_SIZE}")
         logger.info("Liste %s %s : %s", spec.label, season_label(competition, season), url)
         try:
@@ -322,9 +324,9 @@ def collect_player_ids(competitions: list[str]) -> tuple[list[int], int]:
     ids: set[int] = set()
     skipped = 0
     for comp in competitions:
-        spec = COMPETITION_SPECS[comp]
-        for season in spec.season_ids:
-            for path in sorted(incrowd_dir(spec.native_id, season).glob("[0-9]*.json.gz")):
+        comp_id = source_comp_id(comp, SOURCE_INCROWD)
+        for season in source_season_ids(comp, SOURCE_INCROWD):
+            for path in sorted(incrowd_dir(comp_id, season).glob("[0-9]*.json.gz")):
                 payload = read_json_gz(path)
                 if detail_problem(payload) is not None:
                     skipped += 1
@@ -450,7 +452,7 @@ def print_profiles_summary(report: ProfilesReport, client: Client, elapsed: floa
 def parse_seasons(competition: str, text: str | None) -> list[int]:
     """"202101-202501", "202301" ou "202101,202301" ; défaut : toutes les saisons du périmètre,
     de la plus ancienne à la plus récente."""
-    allowed = sorted(COMPETITION_SPECS[competition].season_ids)
+    allowed = sorted(source_season_ids(competition, SOURCE_INCROWD))
     if not text:
         return allowed
     chosen: set[int] = set()

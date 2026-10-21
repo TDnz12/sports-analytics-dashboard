@@ -800,8 +800,8 @@ def build_report(pm, players, st80, fit80, stp, fitp, betas, grid, fit_all, draw
         rows.append([f"{label} : seuil NC (tentatives)", str(BEFORE[f'NC_{key}']), f"**{nc}**", why])
     S += table(["Seuil", "Avant calibration", "Retenu", "Justification (chiffres)"], rows)
     S.append("")
-    padding = schema.PCT_PADDING[schema.CLUB]
-    in_schema = dict(zip(("games", "minutes"), schema.SAMPLE_THRESHOLDS[schema.CLUB]))
+    padding = schema.PCT_PADDING[schema.CLUB_ICW]
+    in_schema = dict(zip(("games", "minutes"), schema.SAMPLE_THRESHOLDS[schema.CLUB_ICW]))
     for key in PCT_STATS:
         in_schema[f"P_{key}"], in_schema[f"NC_{key}"] = padding[f"{key}_adj"][2:4]
     diff = [f"{k} ({in_schema[k]} contre {proposals[k]})" for k in in_schema
@@ -811,7 +811,7 @@ def build_report(pm, players, st80, fit80, stp, fitp, betas, grid, fit_all, draw
         else "**différentes** : " + ", ".join(diff) + "."))
     # M des stats par 80 hors radar (schema.PER80_SHRINK_M) : M club de la section 1.2, arrondi.
     m_diff = []
-    for col, m_schema in schema.PER80_SHRINK_M[schema.CLUB].items():
+    for col, m_schema in schema.PER80_SHRINK_M[schema.CLUB_ICW].items():
         m_val = round(fit80.query("stat == @col and scope == 'club' and pos == 'tous'")["C"].iloc[0])
         if m_val != m_schema:
             m_diff.append(f"{col} ({m_schema} contre {m_val})")

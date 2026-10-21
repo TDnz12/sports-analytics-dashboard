@@ -91,9 +91,8 @@ def read_json_gz(path: Path) -> dict | None:
 
 
 def season_dir(competition: str, season_id: int, json_root: Path | None = None) -> Path:
-    spec = schema.COMPETITION_SPECS[competition]
     root = schema.json_dir() if json_root is None else Path(json_root)
-    return root / "incrowd" / str(spec.native_id) / str(season_id)
+    return root / "incrowd" / str(schema.source_comp_id(competition, SOURCE_INCROWD)) / str(season_id)
 
 
 def _num(value) -> float:
@@ -112,10 +111,11 @@ def has_extra_time(data: dict) -> bool:
 def extract_match(payload: dict, competition: str) -> dict[str, pd.DataFrame]:
     """Un détail de match InCrowd -> dict {table: DataFrame} aux colonnes du schéma."""
     spec = schema.COMPETITION_SPECS[competition]
+    comp_id = schema.source_comp_id(competition, SOURCE_INCROWD)
     d = payload["data"]
-    if d.get("compId") != spec.native_id:
+    if d.get("compId") != comp_id:
         raise ValueError(f"Match {d.get('id')} : compId {d.get('compId')} au lieu de "
-                         f"{spec.native_id} ({spec.label})")
+                         f"{comp_id} ({spec.label})")
     match_uid = make_uid(SOURCE_INCROWD, d["id"])
     extra = has_extra_time(d)
     home, away = d["homeTeam"], d["awayTeam"]
@@ -418,8 +418,8 @@ def extract_season(competition: str, season_id: int,
     """Toute une saison : les matchs "result" de list.json.gz, chacun lu dans son fichier de
     détail. Un détail absent ou invalide lève une erreur qui les liste tous : on ne construit
     jamais une saison incomplète sans le savoir."""
-    if schema.COMPETITION_SPECS[competition].source != SOURCE_INCROWD:
-        raise ValueError(f"{competition} n'est pas une compétition InCrowd")
+    if season_id not in schema.source_season_ids(competition, SOURCE_INCROWD):
+        raise ValueError(f"{competition} {season_id} n'est pas une saison InCrowd")
     folder = season_dir(competition, season_id, json_root)
     listing = read_json_gz(folder / "list.json.gz")
     if not isinstance(listing, dict) or not isinstance(listing.get("data"), list):

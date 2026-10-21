@@ -182,7 +182,7 @@ class TestScores(unittest.TestCase):
         props = df[df["position_group"] == PROP]
         total = props["penalties_conceded_per80"] * props["minutes_total"] / 80
         rate = total.sum() / props["minutes_total"].sum()
-        m = schema.PER80_SHRINK_M[schema.CLUB]["penalties_conceded"]
+        m = schema.PER80_SHRINK_M[schema.CLUB_ICW]["penalties_conceded"]
         expected = (4.0 * 100 / 80 + m * rate) / (100 + m) * 80
         self.assertAlmostEqual(out.at[0, "penalties_conceded_per80_adj"], expected)
         self.assertLess(out.at[0, "penalties_conceded_per80_adj"], 1.3)  # 4,0 ramené près du poste
@@ -190,7 +190,7 @@ class TestScores(unittest.TestCase):
         big = radar.compute_radar_scores(df.assign(minutes_total=df["minutes_total"] * 100), competition="top14")
         self.assertGreater(big.at[0, "penalties_conceded_per80_adj"], out.at[0, "penalties_conceded_per80_adj"])
         # Le radar ne change pas : mêmes colonnes radar_* avec ou sans rapprochement.
-        with mock.patch.dict(schema.PER80_SHRINK_M, {schema.CLUB: {}}):
+        with mock.patch.dict(schema.PER80_SHRINK_M, {schema.CLUB_ICW: {}}):
             plain = radar.compute_radar_scores(df, competition="top14")
         cols = [c for c in plain.columns if c.startswith("radar_")]
         pd.testing.assert_frame_equal(out[cols], plain[cols])
@@ -206,7 +206,7 @@ class TestScores(unittest.TestCase):
 
     def test_m_de_la_calibration(self):
         """M club de calibration_v1.md, section 1.2, pour chaque stat par 80 des axes du radar."""
-        m = schema.PER80_SHRINK_M[schema.CLUB]
+        m = schema.PER80_SHRINK_M[schema.CLUB_ICW]
         self.assertEqual((m["penalties_conceded"], m["turnovers_conceded"], m["turnovers_won"],
                           m["kick_metres"], m["lineouts_won_jumper"]), (1494, 1982, 550, 180, 89))
         per80 = {a["stat_col"][:-len("_per80")] for a in radar.RADAR_AXES if "made_col" not in a}

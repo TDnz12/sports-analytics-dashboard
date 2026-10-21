@@ -58,56 +58,115 @@ INTERNATIONAL = "international"
 
 
 @dataclass(frozen=True)
+class SeasonSource:
+    """Une saison d'une compétition et la source qui la fournit (« une saison = une source »,
+    plan_espn.md) : une compétition peut changer de source d'une saison à l'autre (Top 14 : ESPN
+    jusqu'en 2020-21, InCrowd ensuite), jamais à l'intérieur d'une saison."""
+    label: str                # libellé affiché, ex "2024-25" ou "2026"
+    source: str               # SOURCE_INCROWD ou SOURCE_ESPN
+    native_comp_id: int       # compId InCrowd ou league ESPN
+    season_id: int            # id natif de la saison chez la source
+    # False : saison déclarée (construction des caches possible) mais pas encore proposée dans
+    # l'appli ni dans les fenêtres de 3 saisons.
+    published: bool = True
+
+
+@dataclass(frozen=True)
 class CompetitionSpec:
     key: str                  # clé interne, ex "top14"
     label: str                # libellé affiché, ex "Top 14"
     mode: str                 # CLUB ou INTERNATIONAL
-    source: str               # SOURCE_INCROWD ou SOURCE_ESPN
-    native_id: int            # compId InCrowd ou league ESPN
-    season_ids: tuple         # ids natifs de saison, la plus récente en premier
+    seasons: tuple            # SeasonSource, la plus récente en premier
     # Nombre de journées de phase régulière : au-delà, le match est une phase finale. Le champ
     # roundTypeId d'InCrowd n'est pas fiable pour ça (phases finales du Top 14 2021-22 en
     # roundTypeId=1, vérifié au lot 0). None : pas de phase finale (Six Nations).
     regular_rounds: int | None
 
 
+def _club_label(start_year: int) -> str:
+    return f"{start_year}-{str(start_year + 1)[-2:]}"
+
+
+def _incrowd_club(comp_id: int, first_year: int, last_year: int) -> tuple:
+    """Saisons InCrowd d'un club, de last_year à first_year (années de début) : saison 202401 =
+    2024-25 (vérifié au lot 0 sur les dates des matchs)."""
+    return tuple(SeasonSource(_club_label(y), SOURCE_INCROWD, comp_id, y * 100 + 1)
+                 for y in range(last_year, first_year - 1, -1))
+
+
+def _espn_club(league: int, start_years: tuple, published: bool) -> tuple:
+    """Saisons ESPN d'un club : ESPN numérote une saison par son année de fin (2017 = 2016-17)."""
+    return tuple(SeasonSource(_club_label(y), SOURCE_ESPN, league, y + 1, published)
+                 for y in start_years)
+
+
 COMPETITION_SPECS: dict[str, CompetitionSpec] = {
     spec.key: spec for spec in [
-        # InCrowd : saison 202401 = 2024-25 (vérifié au lot 0 sur les dates des matchs).
-        CompetitionSpec("top14", "Top 14", CLUB, SOURCE_INCROWD, 1002,
-                        tuple(range(202501, 202100, -100)), 26),
-        CompetitionSpec("prod2", "Pro D2", CLUB, SOURCE_INCROWD, 1013,
-                        tuple(range(202501, 202200, -100)), 30),
-        CompetitionSpec("six_nations", "Six Nations", INTERNATIONAL, SOURCE_ESPN, 180659,
-                        tuple(range(2026, 2009, -1)), None),
+        # Top 14 ESPN (league 270559) : 4 saisons acceptées par l'audit de couverture (lot A,
+        # plan_v1_rugby.md section J) ; 2019-20 refusée (saison arrêtée). Non publiées jusqu'au
+        # lot 5 du plan ESPN.
+        CompetitionSpec("top14", "Top 14", CLUB,
+                        _incrowd_club(1002, 2021, 2025)
+                        + _espn_club(270559, (2020, 2018, 2017, 2016), published=False), 26),
+        CompetitionSpec("prod2", "Pro D2", CLUB, _incrowd_club(1013, 2022, 2025), 30),
+        CompetitionSpec("six_nations", "Six Nations", INTERNATIONAL,
+                        tuple(SeasonSource(str(y), SOURCE_ESPN, 180659, y)
+                              for y in range(2026, 2009, -1)), None),
     ]
 }
 
 
+def _seasons(competition: str, published_only: bool) -> tuple:
+    seasons = COMPETITION_SPECS[competition].seasons
+    return tuple(s for s in seasons if s.published) if published_only else seasons
+
+
+def season_source(competition: str, label: str) -> SeasonSource:
+    """Saison (publiée ou non) de libellé `label` ; ValueError si inconnue."""
+    for s in COMPETITION_SPECS[competition].seasons:
+        if s.label == label:
+            return s
+    raise ValueError(f"Saison {label!r} inconnue pour {COMPETITION_SPECS[competition].label}")
+
+
 def season_label(competition: str, season_id: int) -> str:
-    """Libellé affiché d'une saison : "2024-25" pour l'id InCrowd 202401, "2026" pour l'édition
-    2026 du Six Nations. Lève ValueError pour une saison hors du périmètre de la compétition."""
-    spec = COMPETITION_SPECS[competition]
-    if season_id not in spec.season_ids:
-        raise ValueError(f"Saison {season_id!r} hors du périmètre de {spec.label}")
-    if spec.mode == CLUB:
-        year = season_id // 100
-        return f"{year}-{str(year + 1)[-2:]}"
-    return str(season_id)
+    """Libellé affiché d'une saison d'après son id natif : "2024-25" pour l'id InCrowd 202401,
+    "2016-17" pour l'id ESPN 2017 du Top 14, "2026" pour l'édition 2026 du Six Nations. Lève
+    ValueError pour une saison hors du périmètre de la compétition."""
+    for s in COMPETITION_SPECS[competition].seasons:
+        if s.season_id == season_id:
+            return s.label
+    raise ValueError(f"Saison {season_id!r} hors du périmètre de {COMPETITION_SPECS[competition].label}")
 
 
-def season_labels(competition: str) -> list[str]:
-    """Libellés de toutes les saisons de la compétition, la plus récente en premier (même ordre
-    que nba.SEASONS)."""
-    return [season_label(competition, s) for s in COMPETITION_SPECS[competition].season_ids]
+def season_labels(competition: str, published_only: bool = True) -> list[str]:
+    """Libellés des saisons de la compétition, la plus récente en premier (même ordre que
+    nba.SEASONS). Par défaut les saisons publiées seulement (appli, fenêtres, contrôles des
+    caches) ; published_only=False pour toutes les saisons déclarées (construction des caches)."""
+    return [s.label for s in _seasons(competition, published_only)]
 
 
 def season_id(competition: str, label: str) -> int:
     """Inverse de season_label."""
-    for sid in COMPETITION_SPECS[competition].season_ids:
-        if season_label(competition, sid) == label:
-            return sid
-    raise ValueError(f"Saison {label!r} inconnue pour {COMPETITION_SPECS[competition].label}")
+    return season_source(competition, label).season_id
+
+
+def source_season_ids(competition: str, source: str) -> list[int]:
+    """Ids natifs des saisons fournies par `source` (publiées ou non), la plus récente en premier."""
+    return [s.season_id for s in COMPETITION_SPECS[competition].seasons if s.source == source]
+
+
+def source_comp_id(competition: str, source: str) -> int:
+    """Id de la compétition chez `source` (compId InCrowd, league ESPN)."""
+    ids = {s.native_comp_id for s in COMPETITION_SPECS[competition].seasons if s.source == source}
+    if len(ids) != 1:
+        raise ValueError(f"{COMPETITION_SPECS[competition].label} : pas d'id unique chez {source}")
+    return ids.pop()
+
+
+def competitions_with_source(source: str) -> list[str]:
+    """Compétitions dont au moins une saison vient de `source`."""
+    return [k for k, spec in COMPETITION_SPECS.items() if any(s.source == source for s in spec.seasons)]
 
 
 # --- Caches ----------------------------------------------------------------
@@ -141,7 +200,7 @@ def raw_table_path(competition: str, season: str, table: str, root: Path | None 
     `root` remplace data_cache/ (essais hors du dépôt, ex. scripts/rugby_build.py --out-root)."""
     if table not in RAW_TABLES:
         raise ValueError(f"Table inconnue : {table!r}")
-    if season not in season_labels(competition):
+    if season not in season_labels(competition, published_only=False):
         raise ValueError(f"Saison {season!r} inconnue pour {competition}")
     base = RUGBY_RAW_DIR if root is None else Path(root) / "raw" / "rugby"
     return base / competition / season / f"{table}.parquet"
@@ -151,7 +210,7 @@ def processed_path(competition: str, season: str, period: str = "all",
                    root: Path | None = None) -> Path:
     """data_cache/processed/rugby/<compétition>/<saison>[_regular].parquet (une ligne par joueur),
     même convention de suffixe que les caches NBA (_playoffs)."""
-    if season not in season_labels(competition):
+    if season not in season_labels(competition, published_only=False):
         raise ValueError(f"Saison {season!r} inconnue pour {competition}")
     if period not in PERIODS:
         raise ValueError(f"Période inconnue : {period!r} (attendu : {', '.join(PERIODS)})")
@@ -160,22 +219,35 @@ def processed_path(competition: str, season: str, period: str = "all",
     return base / competition / f"{season}{suffix}.parquet"
 
 
-# Mode "3 saisons" du radar (chantier E) : la saison choisie et les 2 précédentes, même compétition.
-# Une compétition n'a qu'une source (CompetitionSpec.source) : une fenêtre ne mélange donc jamais
-# deux sources. Club seulement.
+# Mode "3 saisons" du radar (chantier E) : la saison choisie et les 2 précédentes, même compétition,
+# saisons publiées, consécutives et de la même source (jamais une fenêtre à cheval sur deux sources,
+# plan_v1_rugby.md section J). Club seulement.
 WINDOW_SEASONS = 3
+
+
+def window_candidates(competition: str, season: str) -> list[str] | None:
+    """Libellés des WINDOW_SEASONS saisons consécutives qui finissent à `season` (club), qu'elles
+    existent ou non, de la plus ancienne à la plus récente ; None hors club."""
+    if COMPETITION_SPECS[competition].mode != CLUB:
+        return None
+    end = int(season[:4])
+    return [_club_label(y) for y in range(end - WINDOW_SEASONS + 1, end + 1)]
 
 
 def window_seasons(competition: str, season: str) -> list[str] | None:
     """Libellés des WINDOW_SEASONS saisons de la fenêtre qui finit à `season`, de la plus ancienne à
-    la plus récente, ou None si la fenêtre n'existe pas (saison trop ancienne pour avoir ses 2
-    précédentes dans le périmètre, saison inconnue, compétition internationale)."""
-    spec = COMPETITION_SPECS[competition]
-    labels = season_labels(competition)  # la plus récente en premier, consécutives
-    if spec.mode != CLUB or season not in labels:
+    la plus récente, ou None si la fenêtre n'existe pas : compétition internationale, saison
+    inconnue, une des saisons absente ou non publiée (années consécutives exigées : le trou de
+    2019-20 en Top 14 ne se saute pas), ou saisons de sources différentes."""
+    labels = season_labels(competition)
+    if season not in labels:
         return None
-    window = labels[labels.index(season):labels.index(season) + WINDOW_SEASONS]
-    return window[::-1] if len(window) == WINDOW_SEASONS else None
+    window = window_candidates(competition, season)
+    if window is None or any(s not in labels for s in window):
+        return None
+    if len({season_source(competition, s).source for s in window}) != 1:
+        return None
+    return window
 
 
 def window_path(competition: str, season: str, period: str = "all",
@@ -209,13 +281,28 @@ RUGBY_PROCESSED_SCHEMA_VERSION = 4      # v2 : low_sample_size au seuil club cal
 RUGBY_WINDOW_SCHEMA_VERSION = 1
 
 # --- Seuils et radar (calibration : scripts/rugby_calibrate.py, rugby_notes/calibration_v1.md) ---
+# Profils de calibration : (mode, source) de la saison. Les réglages calibrés dépendent de la source
+# et pas seulement du mode : ESPN et InCrowd ne comptent pas pareil (plan_v1_rugby.md, section J),
+# d'où une calibration propre aux saisons ESPN (plan_espn.md, lot 4).
+CLUB_ICW = (CLUB, SOURCE_INCROWD)
+INTERNATIONAL_ESPN = (INTERNATIONAL, SOURCE_ESPN)
+
+
+def calibration_profile(competition: str, season: str | None = None) -> tuple[str, str]:
+    """Profil (mode, source) de la saison `season` de la compétition ; sans saison, celui de la
+    saison publiée la plus récente."""
+    src = (season_source(competition, season) if season is not None
+           else _seasons(competition, published_only=True)[0])
+    return COMPETITION_SPECS[competition].mode, src.source
+
+
 # Population de référence du radar et badge "échantillon court" : (matchs joués, minutes).
 # Club : 520 min = plus grand seuil qui garde, dans chaque poste et chaque saison (Top 14 et
 # Pro D2), au moins 12 joueurs et 70 % des minutes jouées ; au-delà, les piliers (39 min par
 # match en médiane) passent sous 70 %. Une fiabilité médiane de 0,6 sur l'ancien socle aurait
 # demandé 1 220 min. 5 matchs : sans effet à 520 min (7 matchs au moins), gardé pour le badge.
 # International : provisoire, à calibrer au lot 7 avec la même méthode.
-SAMPLE_THRESHOLDS = {CLUB: (5, 520), INTERNATIONAL: (2, 120)}
+SAMPLE_THRESHOLDS = {CLUB_ICW: (5, 520), INTERNATIONAL_ESPN: (2, 120)}
 
 # Pourcentages ajustés ("padding", même formule que la NBA) : (réussis + P x moyenne de
 # référence) / (tentatives + P). {mode : {colonne ajustée : (réussis, tentatives, P, tentatives
@@ -223,10 +310,10 @@ SAMPLE_THRESHOLDS = {CLUB: (5, 520), INTERNATIONAL: (2, 120)}
 # P : split-half en tentatives, un seul P par stat (les P par poste divergent, piste notée après
 # la V1). Minimum NC : volume où le joueur pèse 0,2 dans son % ajusté (n = P / 4, arrondi à 5),
 # ordre de grandeur des seuils NBA. Référence "position" : moyenne du poste ; "kickers" : tous les
-# buteurs qualifiés, sans poste. International : au lot 7.
+# buteurs qualifiés, sans poste. Clés : profils de calibration. International : au lot 7.
 PADDING_REF_POSITION, PADDING_REF_KICKERS = "position", "kickers"
 PCT_PADDING = {
-    CLUB: {
+    CLUB_ICW: {
         "tackle_pct_adj": ("tackles", "tackle_attempts", 97, 25, PADDING_REF_POSITION),
         "gain_line_pct_adj": ("carries_gain_line", "carries", 82, 20, PADDING_REF_POSITION),
         "goal_kick_pct_adj": ("goals_made", "goal_attempts", 146, 35, PADDING_REF_KICKERS),
@@ -239,7 +326,7 @@ PCT_PADDING = {
 # comme un seul P par stat), minutes auxquelles la moitié de l'écart observé entre joueurs est du
 # bruit. Contrôlées par scripts/rugby_calibrate.py.
 PER80_SHRINK_M = {
-    CLUB: {
+    CLUB_ICW: {
         "tackles": 382, "metres": 400, "penalties_conceded": 1494, "turnovers_conceded": 1982,
         "carries": 145, "turnovers_won": 550, "clean_breaks": 1126, "defenders_beaten": 345,
         "offloads": 444, "passes": 297, "kick_metres": 180, "tries": 1919,
@@ -247,7 +334,8 @@ PER80_SHRINK_M = {
     },
 }
 
-# Axes du radar club. Règle (décision du 13 octobre 2026) : un axe n'est sur le radar d'un poste
+# Axes du radar club, profil CLUB_ICW (un dictionnaire par profil au lot 5 du plan ESPN, avec les
+# textes du radar). Règle (décision du 13 octobre 2026) : un axe n'est sur le radar d'un poste
 # que si sa fiabilité sur une saison de 520 min atteint 0,4 pour ce poste (calibration_v1.md,
 # section 5). Hors radar mais gardés dans le tableau et la fiche joueur : pénalités concédées et
 # ballons perdus (par 80, "peu fiable sur une saison"), franchissements, essais (total), % au pied

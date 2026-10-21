@@ -180,7 +180,7 @@ def get_player_stats(season: str, force_refresh: bool = False, period: str = "al
 
 
 # Seuils NC des pourcentages : mêmes valeurs que le radar (schema.PCT_PADDING, calibration).
-_NC = {adj: spec[3] for adj, spec in schema.PCT_PADDING[schema.CLUB].items()}
+_NC = {adj: spec[3] for adj, spec in schema.PCT_PADDING[schema.CLUB_ICW].items()}
 
 
 def _per80(key: str, label: str, category: str, unreliable: bool = False) -> Metric:
@@ -242,7 +242,7 @@ DETAIL_LEAD_COLUMNS = {
 }
 DETAIL_TAIL_COLUMNS = {"tries": "Essais", "cards": "Cartons (J / R)"}
 
-_MIN_GAMES, _MIN_MINUTES = schema.SAMPLE_THRESHOLDS[schema.CLUB]
+_MIN_GAMES, _MIN_MINUTES = schema.SAMPLE_THRESHOLDS[schema.CLUB_ICW]
 LOW_SAMPLE_LABEL = f"moins de {_MIN_GAMES} matchs ou {_MIN_MINUTES} minutes"
 
 SOURCE_CAPTION = (

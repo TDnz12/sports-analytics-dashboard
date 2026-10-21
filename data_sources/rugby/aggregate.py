@@ -101,8 +101,8 @@ def aggregate_season(tables: dict[str, pd.DataFrame], competition: str,
     """Une ligne par joueur présent sur au moins une feuille de match de la période."""
     if period not in schema.PERIODS:
         raise ValueError(f"Période inconnue : {period!r}")
-    spec = schema.COMPETITION_SPECS[competition]
     all_matches = tables["matches"]
+    season = all_matches.sort_values("date_utc")["season"].iloc[-1]   # la plus récente
     positions = assign_positions(tables["lineups"], tables["player_match"], all_matches)
 
     matches = all_matches if period == "all" else all_matches[all_matches["phase"] == "regular"]
@@ -147,7 +147,7 @@ def aggregate_season(tables: dict[str, pd.DataFrame], competition: str,
     for col, (num, den) in RATIOS.items():
         out[col] = _div(out[num], out[den])
 
-    min_games, min_minutes = schema.SAMPLE_THRESHOLDS[spec.mode]
+    min_games, min_minutes = schema.SAMPLE_THRESHOLDS[schema.calibration_profile(competition, season)]
     out["low_sample_size"] = (out["games_played"] < min_games) | (out["minutes_total"] < min_minutes)
     for col in ("age", "height_cm", "weight_kg"):
         out[col] = np.nan
@@ -157,7 +157,7 @@ def aggregate_season(tables: dict[str, pd.DataFrame], competition: str,
     out["player_label"] = out["player"].where(~dup, out["player"] + " (" + out["team"] + ")")
     out["sport"] = "rugby"
     out["competition"] = competition
-    out["season"] = all_matches.sort_values("date_utc")["season"].iloc[-1]   # la plus récente
+    out["season"] = season
 
     head = ["sport", "season", "player", "team", "competition", "player_uid", "player_label",
             "first_name", "last_name",
